@@ -11,6 +11,19 @@ from bitcasa import Bitcasa
 
 fuse.fuse_python_api = (0, 2)
 
+class MyStat(fuse.Stat):
+  def __init__(self):
+    self.st_mode = stat.S_IFDIR | 0755
+    self.st_ino = 0
+    self.st_dev = 0
+    self.st_nlink = 2
+    self.st_uid = 0
+    self.st_gid = 0
+    self.st_size = 4096
+    self.st_atime = 0
+    self.st_mtime = 0
+    self.st_ctime = 0
+
 # Since Bitcasa API doesn't have real "permissions", lie.
 class BitcasaStat(fuse.Stat):
 	def __init__(self, item = ""):
@@ -38,11 +51,13 @@ class BitcasaStat(fuse.Stat):
 class BitcasaFS(fuse.Fuse):
 	def __init__(self, *args, **kw):
 		fuse.Fuse.__init__(self, *args, **kw)
+		print "Fuse Init"
 		
 		# Python FUSE Options
 		self.bitcasa = Bitcasa('config.json')
 		if(self.bitcasa == None):
 			sys.exit("Failed to authenticate Bitcasa Client.")
+		print "Authenticated fine"
 		# Bitcasa Encoded Path (for things like rename/create/delete)
 		self.bpath = ""
 		# Breadcrumbs to how we got where we are.
@@ -53,9 +68,10 @@ class BitcasaFS(fuse.Fuse):
 	def getattr(self, path):
 		print 'called getattr:', path
 		if (path == '/'):
-			t = [0,]*10
-			t[0] =  0755
-			t[3] = 2; t[6] = 2048
+			t = MyStat();
+			t.st_atime = int(time.time())
+			t.st_mtime = t.st_atime
+			t.st_ctime = t.st_atime
 			return t
 		# Else pass File/Folder Object
 		# mkdir Check
