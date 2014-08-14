@@ -14,6 +14,7 @@ import json
 import base64
 import sys
 import os
+import pprint
 
 # Upload Progress Helper
 # @todo - May switch Download to this as well.
@@ -136,9 +137,16 @@ class Bitcasa:
 
 	# File API Methods
 	def download_file (self, file_id, path, file_name, file_size):
-		f = open(self.cache_dir + "/" + file_name, 'wb')
-		print "Downloading file from: " + self.api_url + "/files/"+file_id+"/"+ file_name +"?access_token=" + self.access_token + "&path=/" + path
-		u = urllib2.urlopen(self.api_url + "/files/"+file_id+"/"+file_name+"?access_token=" + self.access_token + "&path/" + path)
+		local_file = self.cache_dir + "/" + file_name
+		f = open(local_file, 'wb')
+		file_url = self.api_url + "/files/"+file_id+"/"+ urllib.quote_plus(file_name) +"?access_token=" + self.access_token + "&path=/" + path
+		print "Downloading file from URL: " + file_url
+		req = urllib2.Request(file_url)
+		try:
+			u = urllib2.urlopen(req)
+		except urllib2.URLError as e:
+			print e.reason
+			return ""
 		print "Downloading: %s Bytes: %s" % (file_name, file_size)
 		file_size_dl = 0
 		block_sz = 8192
@@ -154,7 +162,29 @@ class Bitcasa:
 			print status
 		print "Closing new File"
 		f.close()
-		return self.cache_dir + "/" + file_name
+		return local_file
+
+        def download_file_part (self, download_url, offset, size, total_size):
+                print "Downloading file from URL: " + download_url
+		rangeHeader = {}
+		if ((offset + size) > total_size):
+			rangeHeader = {'Range':'bytes='+str(offset)+'-'+str(total_size)}
+		else:
+			rangeHeader = {'Range':'bytes='+str(offset)+'-'+str(offset+size)}
+		pprint.pprint (rangeHeader)
+                req = urllib2.Request(download_url,headers=rangeHeader)
+                try:   
+                        u = urllib2.urlopen(req)
+                except urllib2.URLError as e:
+                        print e.reason
+                        return ""
+                return u.read(size)
+
+
+        def download_file_url (self, file_id, path, file_name, file_size):
+                file_url = self.api_url + "/files/"+file_id+"/"+ urllib.quote_plus(file_name) +"?access_token=" + self.access_token + "&path=/" + path
+                print "File URL: " + file_url
+		return file_url
 
 	def upload_file (self, path, file_name, file_size):
 		return
