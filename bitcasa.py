@@ -15,6 +15,11 @@ import base64
 import sys
 import os
 import pprint
+import httplib
+from urlparse import urlparse
+import mutex
+from threading import Thread
+from threading import Lock
 
 # Upload Progress Helper
 # @todo - May switch Download to this as well.
@@ -82,8 +87,36 @@ class Bitcasa:
 		# See if we need our tokens
 		if(self.auth_token == "") or (self.access_token == ""):
 			return self.authenticate()
-		else:
-			return None
+
+		# Initiate Connection
+		self.api_host = urlparse(self.api_url).hostname
+		self.api_path = urlparse(self.api_url).path
+		self.mutex = Lock()
+		self.HTTPSconnection()
+		return None
+
+	def HTTPSconnection (self):
+		self.https_conn = None
+		self.https_conn = httplib.HTTPSConnection(self.api_host, timeout=120)
+		self.mutex.acquire()
+		try:
+			print "HTTPSconnection connecting to: "+self.api_host+" "+self.api_path
+			self.https_conn.connect()
+			self.https_conn.request("GET", self.api_path, headers={"Connection":" keep-alive"})
+			r1 = self.https_conn.getresponse()
+			print "HTTPSconnection status: "+str(r1.status)
+			r1.read()
+		except httplib.HTTPException, e:
+			print "Exception (Bitcasa:HTTPSconnection): "+str(e)
+		self.mutex.release()
+		
+	def HTTPSdisconnect (self):
+		self.mutex.acquire()
+		try:
+			self.https_conn.close()
+		except HTTPException, e:
+			print "Exception (Bitcasa:HTTPSdisconnect): "+str(e)
+		self.mutex.release()
 
 	def save_config (self):
 		with open(self.config_path, 'w') as outfile:
@@ -108,12 +141,23 @@ class Bitcasa:
 			return error
 
 	def list_folder (self, path = ""):
-		request = urllib2.Request(self.api_url + "/folders" + path + "?access_token=" + self.access_token)
+		#request = urllib2.Request(self.api_url + "/folders" + path + "?access_token=" + self.access_token)
+		self.mutex.acquire()
+		r2 = None
+		response = None
 		try:
-			response = json.load(urllib2.urlopen(request))
-		except urllib2.HTTPError, e:
-			error = e.read()
+			list_folder_url = self.api_path + "/folders" + path + "?access_token=" + self.access_token
+			print "list_folder.list_folder_url = "+list_folder_url
+			self.https_conn.request("GET", list_folder_url)
+			r2 = self.https_conn.getresponse()
+			print "list_folder: "+str(r2.status)+" "+r2.reason
+			raw_response = r2.read()
+			print "list_folder.raw_response = "+raw_response
+			response = json.loads(raw_response)
+		except httplib.HTTPException, e:
+			error = str(e)
 			response = json.loads(error)
+		self.mutex.release()
 		if(response['result'] == None):
 			return response
 		else:
@@ -166,23 +210,36 @@ class Bitcasa:
 
         def download_file_part (self, download_url, offset, size, total_size):
                 print "Downloading file from URL: " + download_url
-		rangeHeader = {}
+		rangeHeader = None
 		if ((offset + size) > total_size):
 			rangeHeader = {'Range':'bytes='+str(offset)+'-'+str(total_size)}
 		else:
-			rangeHeader = {'Range':'bytes='+str(offset)+'-'+str(offset+size)}
+			rangeHeader = {'Range':'bytes='+str(offset)+'-'+str(offset+(size-1))}
 		pprint.pprint (rangeHeader)
-                req = urllib2.Request(download_url,headers=rangeHeader)
+		return_data = ""
+		r3 = None
                 try:   
-                        u = urllib2.urlopen(req)
-                except urllib2.URLError as e:
-                        print e.reason
-                        return ""
-                return u.read(size)
+			print "download_file_part getmutex"
+			self.mutex.acquire()
+			print "download_file_part create request"
+			self.https_conn.request("GET", download_url,headers=rangeHeader)
+			print "download_file_part get response"
+			r3 = self.https_conn.getresponse()
+			print "download_file_part get data "+str(size)
+			return_data = r3.read(size)
+			#additional_data = r3.read()
+			#print "download_file_part.additional_data "+additional_data+" "+str(len(additional_data))
+                except Exception as e:
+			self.mutex.release()
+                        print "Exception (download_file_part): "+str(e)
+                        return
+		self.mutex.release()
+                return return_data
 
 
         def download_file_url (self, file_id, path, file_name, file_size):
-                file_url = self.api_url + "/files/"+file_id+"/"+ urllib.quote_plus(file_name) +"?access_token=" + self.access_token + "&path=/" + path
+                #file_url = self.api_url + "/files/"+file_id+"/"+ urllib.quote_plus(file_name) +"?access_token=" + self.access_token + "&path=/" + path
+		file_url = self.api_path + "/files/"+file_id+"/"+ urllib.quote_plus(file_name) +"?access_token=" + self.access_token + "&path=/" + path
                 print "File URL: " + file_url
 		return file_url
 
