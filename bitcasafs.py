@@ -161,6 +161,7 @@ class BitcasaFS(fuse.Fuse):
 
 	def flush(self, path, fh):
 		print "flush call"
+		pprint.pprint (self.bitcasa.httpsConns)
 		if fh != None:
 			print "  close"
 			fh.close()

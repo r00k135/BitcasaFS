@@ -16,10 +16,12 @@ import sys
 import os
 import pprint
 import httplib
+import socket
+import time
 from urlparse import urlparse
 import mutex
-from threading import Thread
-from threading import Lock
+import threading
+from collections import namedtuple
 
 # Upload Progress Helper
 # @todo - May switch Download to this as well.
@@ -57,6 +59,7 @@ class file_with_callback(file):
 
 # Bitcasa Class
 class Bitcasa:
+	httpsConns = dict()
 	# Start Client & Load Config
 	def __init__ (self, config_path):
 		# Config file
@@ -91,24 +94,59 @@ class Bitcasa:
 		# Initiate Connection
 		self.api_host = urlparse(self.api_url).hostname
 		self.api_path = urlparse(self.api_url).path
-		self.mutex = Lock()
-		self.HTTPSconnection()
 		return None
 
-	def HTTPSconnection (self):
-		self.https_conn = None
-		self.https_conn = httplib.HTTPSConnection(self.api_host, timeout=120)
-		self.mutex.acquire()
-		try:
-			print "HTTPSconnection connecting to: "+self.api_host+" "+self.api_path
-			self.https_conn.connect()
-			self.https_conn.request("GET", self.api_path, headers={"Connection":" keep-alive"})
-			r1 = self.https_conn.getresponse()
-			print "HTTPSconnection status: "+str(r1.status)
-			r1.read()
-		except httplib.HTTPException, e:
-			print "Exception (Bitcasa:HTTPSconnection): "+str(e)
-		self.mutex.release()
+	def assignConnection (self, threadId):
+		if threadId in self.httpsConns:
+			try:
+				print "peerName: ("+str(threadId)+") "+str(self.httpsConns[threadId].https_conn.sock.getpeername())
+				self.httpsConns[threadId].cnt += 1
+			except socket.error, (value,message):
+				try:
+					print  "peerName: ("+str(threadId)+") reconnecting socket val:"+str(value)+" msg:"+str(message)
+					self.httpsConns[threadId].mutex.acquire()
+					#self.httpsConns[threadId].https_conn.close()
+					self.httpsConns[threadId].https_conn = httplib.HTTPSConnection(self.api_host, timeout=20)
+	                                self.httpsConns[threadId].https_conn.connect()
+	                                self.httpsConns[threadId].https_conn.sock.settimeout(20)
+					self.httpsConns[threadId].mutex.release()
+				except socket.error, (value1,message1):
+					print "reconnect error val:"+str(value1)+" msg:"+str(message1)
+		else:
+			try:
+				newConn = namedtuple('newConn', 'https_conn, mutex, cnt, last_access')
+				self.httpsConns[threadId] = newConn
+				self.httpsConns[threadId].https_conn = httplib.HTTPSConnection(self.api_host, timeout=20)
+				self.httpsConns[threadId].https_conn.connect()
+				self.httpsConns[threadId].https_conn.sock.settimeout(20)
+				self.httpsConns[threadId].mutex = threading.Lock()
+				self.httpsConns[threadId].cnt = 0
+				self.httpsConns[threadId].mutex.acquire()
+				self.httpsConns[threadId].https_conn.connect()
+				self.httpsConns[threadId].https_conn.request("GET", self.api_path, headers={"Connection":" keep-alive"})
+				r1 = self.httpsConns[threadId].https_conn.getresponse()
+				print "assignConnection ("+str(threadId)+") status: "+str(r1.status)
+				r1.read()
+			except httplib.HTTPException, e:
+				print "Exception (Bitcasa:assignConnection:newConnect - "+str(threadId)
+			self.httpsConns[threadId].mutex.release()
+		self.httpsConns[threadId].last_access = time.time()
+		return self.httpsConns[threadId]
+
+	def recycleConnection (self, threadId):
+		if threadId not in self.httpsConns:
+			print "recycleConnection:assignConnection ("+str(threadId)+")"
+			self.assignConnection (threadId)
+		else:
+			print "recycleConnection:recycle ("+str(threadId)+")"
+			self.httpsConns[threadId].mutex.acquire()
+			self.httpsConns[threadId].https_conn.close()
+			self.httpsConns[threadId].https_conn = httplib.HTTPSConnection(self.api_host, timeout=20)
+			self.httpsConns[threadId].https_conn.connect()
+			self.httpsConns[threadId].https_conn.sock.settimeout(20)
+			self.httpsConns[threadId].mutex.release()
+			print "recycleConnection:recycle ("+str(threadId)+") connected"
+			
 		
 	def HTTPSdisconnect (self):
 		self.mutex.acquire()
@@ -142,22 +180,23 @@ class Bitcasa:
 
 	def list_folder (self, path = ""):
 		#request = urllib2.Request(self.api_url + "/folders" + path + "?access_token=" + self.access_token)
-		self.mutex.acquire()
+		print "Threads: "+str(threading.active_count())+" "+str(threading.current_thread().ident)
+		conn = self.assignConnection (threading.current_thread().ident)
+		conn.mutex.acquire()
 		r2 = None
 		response = None
 		try:
 			list_folder_url = self.api_path + "/folders" + path + "?access_token=" + self.access_token
 			print "list_folder.list_folder_url = "+list_folder_url
-			self.https_conn.request("GET", list_folder_url)
-			r2 = self.https_conn.getresponse()
+			conn.https_conn.request("GET", list_folder_url)
+			r2 = conn.https_conn.getresponse()
 			print "list_folder: "+str(r2.status)+" "+r2.reason
 			raw_response = r2.read()
 			print "list_folder.raw_response = "+raw_response
 			response = json.loads(raw_response)
-		except httplib.HTTPException, e:
-			error = str(e)
-			response = json.loads(error)
-		self.mutex.release()
+		except Exception, e:
+			print "Exception (list_folder) "+str(type(e))+" "+str(e)
+		conn.mutex.release()
 		if(response['result'] == None):
 			return response
 		else:
@@ -210,6 +249,7 @@ class Bitcasa:
 
         def download_file_part (self, download_url, offset, size, total_size):
                 print "Downloading file from URL: " + download_url
+		print "Threads: "+str(threading.active_count())+" "+str(threading.current_thread().ident)
 		rangeHeader = None
 		if ((offset + size) > total_size):
 			rangeHeader = {'Range':'bytes='+str(offset)+'-'+str(total_size)}
@@ -218,22 +258,33 @@ class Bitcasa:
 		pprint.pprint (rangeHeader)
 		return_data = ""
 		r3 = None
-                try:   
-			print "download_file_part getmutex"
-			self.mutex.acquire()
-			print "download_file_part create request"
-			self.https_conn.request("GET", download_url,headers=rangeHeader)
-			print "download_file_part get response"
-			r3 = self.https_conn.getresponse()
-			print "download_file_part get data "+str(size)
-			return_data = r3.read(size)
-			#additional_data = r3.read()
-			#print "download_file_part.additional_data "+additional_data+" "+str(len(additional_data))
-                except Exception as e:
-			self.mutex.release()
-                        print "Exception (download_file_part): "+str(e)
-                        return
-		self.mutex.release()
+		endLoop = 1
+		conn = None
+		threadId = threading.current_thread().ident
+		while endLoop != 0:
+	                try:   
+				conn = self.assignConnection (threading.current_thread().ident)
+				print "download_file_part getmutex"
+				conn.mutex.acquire()
+				print "download_file_part create request"
+				conn.https_conn.request("GET", download_url,headers=rangeHeader)
+				print "download_file_part ("+str(threadId)+") get response, connection used: "+str(conn.cnt)
+				r3 = conn.https_conn.getresponse()
+				print "download_file_part get data "+str(size)
+				return_data = r3.read(size)
+				additional_data = r3.read()
+				print "download_file_part.additional_data "+additional_data+" "+str(len(additional_data))
+				conn.mutex.release()
+				endLoop = 0
+	                except Exception as e:
+				if conn != None:
+					conn.mutex.release()
+				print "Exception (download_file_part): "+str(type(e))+" "+str(e)+" endLoop:"+str(endLoop)
+				self.recycleConnection(threading.current_thread().ident)
+				endLoop += 1
+				if endLoop > 10:
+					print "Exception (download_file_part): timeout"
+					return
                 return return_data
 
 
