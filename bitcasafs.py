@@ -29,7 +29,7 @@ class MyStat(fuse.Stat):
 class BitcasaStat(fuse.Stat):
 	def __init__(self, item = ""):
 		fuse.Stat.__init__(self)
-		print 'called BitcasaStat:',item
+		#print 'called BitcasaStat:',item
 
 		# Check to see if item is file or folder
 		if(item['Type'] == 'folders'):
@@ -161,7 +161,6 @@ class BitcasaFS(fuse.Fuse):
 
 	def flush(self, path, fh):
 		print "flush call"
-		pprint.pprint (self.bitcasa.httpsConns)
 		if fh != None:
 			print "  close"
 			fh.close()

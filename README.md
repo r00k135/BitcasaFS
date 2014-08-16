@@ -5,6 +5,13 @@ A Bitcasa FUSE Filesystem implementation in Python.
 
 Updated to work with the current API
 
+
+Python Packages Required
+========================
+apt-get install python-fuse   # ubuntu
+pip install urllib3
+
+
 Usage
 =====
 
