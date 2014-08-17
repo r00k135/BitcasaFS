@@ -10,6 +10,7 @@ Python Packages Required
 ========================
 apt-get install python-fuse   # ubuntu
 pip install urllib3
+pip install workerpool
 
 
 Usage

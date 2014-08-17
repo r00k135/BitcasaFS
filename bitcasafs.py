@@ -156,7 +156,7 @@ class BitcasaFS(fuse.Fuse):
 
         # Read using streaming
         def read(self, path, size, offset, fh): 
-                print "read: "+path+" "+str(offset)+" "+str(size)
+                print "read: "+path+" offset:"+str(offset)+" size:"+str(size)
                 return self.bitcasa.download_file_part(self.dir[path.split('/')[-1]]['DownloadURL'], offset, size, self.dir[path.split('/')[-1]]['Size'])
 
 	def flush(self, path, fh):
