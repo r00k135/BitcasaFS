@@ -24,9 +24,9 @@ class DownloadJob(workerpool.Job):
 			newBuf = namedtuple('newBuf', 'data, complete, size')
 			if str(self.rangeHeader) not in self.bcParent.aheadBuffer:
 				print "download_file_part create buffer "+str(self.rangeHeader)+" size:"+str(self.size)
-				self.bcParent.aheadBuffer[str(self.rangeHeader)] = newBuf
-				self.bcParent.aheadBuffer[str(self.rangeHeader)].complete = 0
-				self.bcParent.aheadBuffer[str(self.rangeHeader)].size = self.size
+				self.bcParent.aheadBuffer[self.download_url+str(self.rangeHeader)] = newBuf
+				self.bcParent.aheadBuffer[self.download_url+str(self.rangeHeader)].complete = 0
+				self.bcParent.aheadBuffer[self.download_url+str(self.rangeHeader)].size = self.size
 	def run(self):
                 #print "MyJob Downloading file from URL: " + self.download_url
 		threadId = threading.current_thread().ident
@@ -46,10 +46,10 @@ class DownloadJob(workerpool.Job):
 					print "Error: DownloadJob downLoop too high, can't download range:"+str(self.rangeHeader)
                         		return
 		self.bcParent.aheadBuffer_mutex.acquire()
-                if self.bcParent.aheadBuffer[str(self.rangeHeader)].complete == 0:
+                if self.bcParent.aheadBuffer[self.download_url+str(self.rangeHeader)].complete == 0:
 			print "download_file_part update buffer "+str(self.rangeHeader)+" size:"+str(self.size)
-			self.bcParent.aheadBuffer[str(self.rangeHeader)].data = r3.data
-			self.bcParent.aheadBuffer[str(self.rangeHeader)].complete = 1
+			self.bcParent.aheadBuffer[self.download_url+str(self.rangeHeader)].data = r3.data
+			self.bcParent.aheadBuffer[self.download_url+str(self.rangeHeader)].complete = 1
 		self.bcParent.aheadBuffer_mutex.release()
 
 
@@ -61,8 +61,8 @@ class Bitcasa:
 	aheadBuffer_mutex = threading.Lock()
 	bufferSizeCnt = dict()
 	bufferSizeCnt_mutex = threading.Lock()
-	NUM_SOCKETS = 80
-	NUM_WORKERS = 100
+	NUM_SOCKETS = 30
+	NUM_WORKERS = 10
 	retry = urllib3.util.Retry(read=3, backoff_factor=2)
 	# Start Client & Load Config
 	def __init__ (self, config_path):
@@ -189,15 +189,15 @@ class Bitcasa:
 		endLoop = 1
 		while endLoop != 0:
 			self.aheadBuffer_mutex.acquire()
-			if str(rangeHeader) in self.aheadBuffer:
+			if download_url+str(rangeHeader) in self.aheadBuffer:
 				self.aheadBuffer_mutex.release()
 				endLoop = 0
-				while self.aheadBuffer[str(rangeHeader)].complete != 1:
+				while self.aheadBuffer[download_url+str(rangeHeader)].complete != 1:
 					print "download_file_part RangeHeader sleep: "+str(rangeHeader)
 					time.sleep(1)
-				return_data = self.aheadBuffer[str(rangeHeader)].data
+				return_data = self.aheadBuffer[download_url+str(rangeHeader)].data
 				self.aheadBuffer_mutex.acquire()
-				self.aheadBuffer.pop(str(rangeHeader), None)
+				self.aheadBuffer.pop(download_url+str(rangeHeader), None)
 				self.aheadBuffer_mutex.release()
 			else:
 				self.aheadBuffer_mutex.release()
@@ -205,7 +205,7 @@ class Bitcasa:
 				# ADD MULTIPLE GETS
 				if ((offset + size) > total_size) or (self.bufferSizeCnt[size] < 3):
 					self.aheadBuffer_mutex.acquire()
-					if (str(rangeHeader) not in self.aheadBuffer) and (rangeHeader != None):
+					if (download_url+str(rangeHeader) not in self.aheadBuffer) and (rangeHeader != None):
 						print "download_file_part add range header: "+str(rangeHeader)+" Singleton size:"+str(size)
 						job = DownloadJob(download_url, rangeHeader, self, size)
 						pool.put(job)
@@ -234,7 +234,7 @@ class Bitcasa:
 					print "download_file_part batch adding jobs"
 					self.aheadBuffer_mutex.acquire()
 					for rangeH in ranges:
-						if (str(rangeH) not in self.aheadBuffer) and (rangeH != None):
+						if (download_url+str(rangeH) not in self.aheadBuffer) and (rangeH != None):
 							print "download_file_part add range header: "+str(rangeH)
 							job = DownloadJob(download_url, rangeH, self, size)
 							pool.put(job)
