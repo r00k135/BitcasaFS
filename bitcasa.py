@@ -28,29 +28,29 @@ class DownloadJob(workerpool.Job):
 				self.bcParent.aheadBuffer[self.download_url+str(self.rangeHeader)].complete = 0
 				self.bcParent.aheadBuffer[self.download_url+str(self.rangeHeader)].size = self.size
 	def run(self):
-                #print "MyJob Downloading file from URL: " + self.download_url
+		#print "MyJob Downloading file from URL: " + self.download_url
 		threadId = threading.current_thread().ident
-                print "Threads: "+str(threading.active_count())+" "+str(threadId)
+		print "Threads: "+str(threading.active_count())+" "+str(threadId)
 		downLoop = 1
 		while downLoop != 0:
-	                r3 = None
-       	        	try:
-                        	print "download_file_part create request"
-                        	r3 = self.bcParent.httpsPool.request("GET", self.download_url,headers=self.rangeHeader,retries=self.bcParent.retry)
-                        	print "download_file_part get data "+str(self.rangeHeader)+" connection used: "+str(self.bcParent.httpsPool.num_connections)
+			r3 = None
+			try:
+				print "download_file_part create request"
+				r3 = self.bcParent.httpsPool.request("GET", self.download_url,headers=self.rangeHeader,retries=self.bcParent.retry)
+				print "download_file_part get data "+str(self.rangeHeader)+" connection used: "+str(self.bcParent.httpsPool.num_connections)
 				downLoop = 0
-                	except Exception as e:
-                        	print "Exception (DownloadJob): "+str(type(e))+" "+str(e)
+			except Exception as e:
+				print "Exception (DownloadJob): "+str(type(e))+" "+str(e)
 				downLoop += 1
 				if downLoop > 4:
 					print "Error: DownloadJob downLoop too high, can't download range:"+str(self.rangeHeader)
-                        		return
-		self.bcParent.aheadBuffer_mutex.acquire()
-                if self.bcParent.aheadBuffer[self.download_url+str(self.rangeHeader)].complete == 0:
-			print "download_file_part update buffer "+str(self.rangeHeader)+" size:"+str(self.size)
-			self.bcParent.aheadBuffer[self.download_url+str(self.rangeHeader)].data = r3.data
-			self.bcParent.aheadBuffer[self.download_url+str(self.rangeHeader)].complete = 1
-		self.bcParent.aheadBuffer_mutex.release()
+					return
+			self.bcParent.aheadBuffer_mutex.acquire()
+			if self.bcParent.aheadBuffer[self.download_url+str(self.rangeHeader)].complete == 0:
+				print "download_file_part update buffer "+str(self.rangeHeader)+" size:"+str(self.size)
+				self.bcParent.aheadBuffer[self.download_url+str(self.rangeHeader)].data = r3.data
+				self.bcParent.aheadBuffer[self.download_url+str(self.rangeHeader)].complete = 1
+			self.bcParent.aheadBuffer_mutex.release()
 
 
 class DownloadChunk(workerpool.Job):
@@ -70,38 +70,41 @@ class DownloadChunk(workerpool.Job):
 		print "Threads: "+str(threading.active_count())+" "+str(threadId)
 		downLoop = 1
 		while downLoop != 0:
-	                r3 = None
-	                requestHeader = None
-	                tracked_data = None
-       	        	try:
-                        	requestHeader = {'Range':'bytes='+str(start_byte)+'-'+str(end_byte)}
-                        	print "DownloadChunk create range request: "+str(requestHeader)
-							r3 = self.bcParent.httpsPool.urlopen("GET", self.download_url,headers=requestHeader,retries=self.bcParent.retry)
-							buffered_data = io.BufferedReader(r3, (chunk_size * len(rangeHeaderKeys)))
-							for num in range(0,(len(rangeHeaderKeys)-1)):
-								# Save data in buffer
-								self.bcParent.aheadBuffer_mutex.acquire()
-								if self.bcParent.aheadBuffer[self.download_url+str(self.rangeHeaderKeys[num])].complete == 0:
-									tracked_data = buffered_data.read(chunk_size)
-									print "download_file_part update buffer "+str(self.rangeHeaderKeys[num])+" size:"+str(self.chunk_size)
-									self.bcParent.aheadBuffer[self.download_url+str(self.rangeHeaderKeys[num])].data = tracked_data
-									self.bcParent.aheadBuffer[self.download_url+str(self.rangeHeaderKeys[num])].complete = 1
-								self.bcParent.aheadBuffer_mutex.release()
-								tracked_data = None
-						    downLoop = 0
-                	except Exception as e:
-                        	print "Exception (DownloadChunk): "+str(type(e))+" "+str(e)
+			r3 = None
+			requestHeader = None
+			tracked_data = None
+			try:
+				requestHeader = {'Range':'bytes='+str(self.start_byte)+'-'+str(self.end_byte)}
+				print "DownloadChunk create range request: "+str(requestHeader)
+				#r3 = self.bcParent.httpsPool.urlopen("GET", self.download_url,headers=requestHeader,retries=self.bcParent.retry)
+				r3 = self.bcParent.httpsPool.urlopen("GET", self.download_url, headers=requestHeader,retries=self.bcParent.retry,preload_content=False)
+				print str(r3)+" buffer_size:"+str(self.buffer_size)
+				buffered_data = r3.stream(self.chunk_size)
+				print "start reading rangeHeaderKeys"
+				headerCnt = 0
+				for tracked_data in buffered_data:
+					headerH = self.rangeHeaderKeys[headerCnt]
+					print "DownloadChunk rangeHeaderKeys Loop "+str(headerH)
+					# Save data in buffer
+					self.bcParent.aheadBuffer_mutex.acquire()
+					print "DownloadChunk rangeHeaderKeys Loop - After acquire "+str(headerH)
+					if self.bcParent.aheadBuffer[self.download_url+str(headerH)].complete == 0:
+						print "download_file_part update buffer "+str(headerH)+" size:"+str(self.chunk_size)
+						self.bcParent.aheadBuffer[self.download_url+str(headerH)].data = tracked_data
+						self.bcParent.aheadBuffer[self.download_url+str(headerH)].complete = 1
+					self.bcParent.aheadBuffer_mutex.release()
+					print "DownloadChunk rangeHeaderKeys Loop - After release "+str(headerH)
+					headerCnt += 1
+				r3.release_conn()
+				downLoop = 0
+			except Exception as e:
+				print "Exception (DownloadChunk): "+str(type(e))+" "+str(e)
 				downLoop += 1
 				if downLoop > 4:
-					print "Error: DownloadJob downLoop too high, can't download range:"+str(self.rangeHeader)
-                        		return
-		self.bcParent.aheadBuffer_mutex.acquire()
-                if self.bcParent.aheadBuffer[self.download_url+str(self.rangeHeader)].complete == 0:
-			print "download_file_part update buffer "+str(self.rangeHeader)+" size:"+str(self.size)
-			self.bcParent.aheadBuffer[self.download_url+str(self.rangeHeader)].data = r3.data
-			self.bcParent.aheadBuffer[self.download_url+str(self.rangeHeader)].complete = 1
-		self.bcParent.aheadBuffer_mutex.release()
-
+					print "Error: DownloadJob downLoop too high, can't download range:"+str(self.start_byte)+"-"+str(self.end_byte)
+					downLoop = 0
+		print "Ending Worker: "+str(requestHeader)
+		return
 
 # Bitcasa Class
 class Bitcasa:
@@ -207,10 +210,14 @@ class Bitcasa:
 	def download_file_part (self, download_url, offset, size, total_size):
 		rangeHeader = None
 		return_data = None
+		start_byte = offset
+		end_byte = offset
 		if (offset + size) > total_size:
 			rangeHeader = {'Range':'bytes='+str(offset)+'-'+str(total_size)}
+			end_byte = total_size
 		else:
 			rangeHeader = {'Range':'bytes='+str(offset)+'-'+str(offset+(size-1))}
+			end_byte = offset+(size-1)
 		print "download_file_part RangeHeader top check: "+str(rangeHeader)
 		# TRACK BLOCK SIZE
 		self.bufferSizeCnt_mutex.acquire()
@@ -225,6 +232,7 @@ class Bitcasa:
 			self.aheadBuffer_mutex.acquire()
 			if download_url+str(rangeHeader) in self.aheadBuffer:
 				# Wait to download the current requested block
+				print "download_file_part download found in buffer"+str(rangeHeader)
 				self.aheadBuffer_mutex.release()
 				endLoop = 0
 				sleepCnt = 0
@@ -232,6 +240,9 @@ class Bitcasa:
 					print "download_file_part RangeHeader sleep: "+str(rangeHeader)
 					time.sleep(0.1)
 					sleepCnt += 1
+					if sleepCnt > 60:
+						print "Error (download_file_part) download wait timeout"
+						return
 				self.aheadBuffer_mutex.acquire()
 				return_data = self.aheadBuffer[download_url+str(rangeHeader)].data
 				self.aheadBuffer.pop(download_url+str(rangeHeader), None)
@@ -243,12 +254,15 @@ class Bitcasa:
 					# ADD SINGLE GET
 					self.aheadBuffer_mutex.acquire()
 					if (download_url+str(rangeHeader) not in self.aheadBuffer) and (rangeHeader != None):
+						self.createBuffer(download_url, rangeHeader, size)
 						print "download_file_part add range header: "+str(rangeHeader)+" Singleton size:"+str(size)
-						job = DownloadJob(download_url, rangeHeader, self, size)
+						job = DownloadChunk(download_url, [rangeHeader], self, size, size, start_byte, end_byte)
 						pool.put(job)
 					self.aheadBuffer_mutex.release()
 					pool.shutdown()
+					print "download_file_part single wait send shutdown: "+str(rangeHeader)+" Singleton size:"+str(size)
 					pool.wait()
+					print "download_file_part single wait finished: "+str(rangeHeader)+" Singleton size:"+str(size)
 				else:
 					# ADD MULTIPLE RANGES
 					print "Multiple add job: "+str(rangeHeader)+" size:"+str(size)+" count:"+str(self.bufferSizeCnt[size])
@@ -278,8 +292,8 @@ class Bitcasa:
 							job = DownloadJob(download_url, rangeH, self, size)
 							pool.put(job)
 					self.aheadBuffer_mutex.release()
-				pool.shutdown()
-				pool.wait()
+					pool.shutdown()
+					pool.wait()
 				endLoop += 1
 				print "download_file_part endLoop: "+str(endLoop)
 				if endLoop > 2:
@@ -292,9 +306,9 @@ class Bitcasa:
 		newBuf = namedtuple('newBuf', 'data, complete, chunk_size')
 		if str(rangeHeader) not in self.aheadBuffer:
 			print "Bitcasa:createBuffer create buffer:"+str(rangeHeader)+" size:"+str(chunk_size)
-			self.bcParent.aheadBuffer[self.download_url+str(rangeHeader)] = newBuf
-			self.bcParent.aheadBuffer[self.download_url+str(rangeHeader)].complete = 0
-			self.bcParent.aheadBuffer[self.download_url+str(rangeHeader)].chunk_size = chunk_size
+			self.aheadBuffer[download_url+str(rangeHeader)] = newBuf
+			self.aheadBuffer[download_url+str(rangeHeader)].complete = 0
+			self.aheadBuffer[download_url+str(rangeHeader)].chunk_size = chunk_size
 		else:
 			print "Error (Bitcasa:createBuffer) create buffer:"+str(rangeHeader)+" size:"+str(chunk_size)+" already exists"
 
