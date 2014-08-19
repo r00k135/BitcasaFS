@@ -71,13 +71,26 @@ class DownloadChunk(workerpool.Job):
 		downLoop = 1
 		while downLoop != 0:
 	                r3 = None
+	                requestHeader = None
+	                tracked_data = None
        	        	try:
-                        	print "download_file_part create request"
-                        	r3 = self.bcParent.httpsPool.request("GET", self.download_url,headers=self.rangeHeader,retries=self.bcParent.retry)
-                        	print "download_file_part get data "+str(self.rangeHeader)+" connection used: "+str(self.bcParent.httpsPool.num_connections)
-				downLoop = 0
+                        	requestHeader = {'Range':'bytes='+str(start_byte)+'-'+str(end_byte)}
+                        	print "DownloadChunk create range request: "+str(requestHeader)
+							r3 = self.bcParent.httpsPool.urlopen("GET", self.download_url,headers=requestHeader,retries=self.bcParent.retry)
+							buffered_data = io.BufferedReader(r3, (chunk_size * len(rangeHeaderKeys)))
+							for num in range(0,(len(rangeHeaderKeys)-1)):
+								# Save data in buffer
+								self.bcParent.aheadBuffer_mutex.acquire()
+								if self.bcParent.aheadBuffer[self.download_url+str(self.rangeHeaderKeys[num])].complete == 0:
+									tracked_data = buffered_data.read(chunk_size)
+									print "download_file_part update buffer "+str(self.rangeHeaderKeys[num])+" size:"+str(self.chunk_size)
+									self.bcParent.aheadBuffer[self.download_url+str(self.rangeHeaderKeys[num])].data = tracked_data
+									self.bcParent.aheadBuffer[self.download_url+str(self.rangeHeaderKeys[num])].complete = 1
+								self.bcParent.aheadBuffer_mutex.release()
+								tracked_data = None
+						    downLoop = 0
                 	except Exception as e:
-                        	print "Exception (DownloadJob): "+str(type(e))+" "+str(e)
+                        	print "Exception (DownloadChunk): "+str(type(e))+" "+str(e)
 				downLoop += 1
 				if downLoop > 4:
 					print "Error: DownloadJob downLoop too high, can't download range:"+str(self.rangeHeader)
