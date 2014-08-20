@@ -151,12 +151,12 @@ class BitcasaFS(fuse.Fuse):
 	# Read using streaming
 	def read(self, path, size, offset, fh=None): 
 		print "read: "+path+" offset:"+str(offset)+" size:"+str(size)
-		return self.bitcasa.download_file_part(self.dir[path.split('/')[-1]]['DownloadURL'], offset, size, self.dir[path.split('/')[-1]]['Size'])
+		return self.bitcasa.download_file_part(self.dir[path.split('/')[-1]]['DownloadURL'], offset, size, self.dir[path.split('/')[-1]]['Size'], str(self.GetContext()['uid']))
 
 	def flush(self, path, fh=None):
 		print "flush call killing"
 		self.bitcasa.pool.shutdown()
-		print "flush call killed"
+		print "flush call killed, buffer still allocated:"+str(len(self.bitcasa.aheadBuffer))
 		return 0
 
 # return -errno.ENOENT

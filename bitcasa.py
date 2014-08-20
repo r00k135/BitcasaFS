@@ -57,7 +57,7 @@ class DownloadJob(workerpool.Job):
 
 
 class DownloadChunk(workerpool.Job):
-	def __init__(self, download_url, rangeHeaderKeys, bcParent, chunk_size, buffer_size, start_byte, end_byte):
+	def __init__(self, download_url, rangeHeaderKeys, bcParent, chunk_size, buffer_size, start_byte, end_byte, client_pid):
 		# should execute within a mutex
 		self.download_url = download_url
 		self.rangeHeaderKeys = rangeHeaderKeys
@@ -66,6 +66,7 @@ class DownloadChunk(workerpool.Job):
 		self.buffer_size = buffer_size
 		self.start_byte = start_byte
 		self.end_byte = end_byte
+		self.client_pid = client_pid
 	def run(self):
 		#print "DownloadChunk Downloading file from URL: " + self.download_url
 		threadId = threading.current_thread().ident
@@ -87,15 +88,15 @@ class DownloadChunk(workerpool.Job):
 				for tracked_data in buffered_data:
 					if headerCnt < len(self.rangeHeaderKeys):
 						headerH = self.rangeHeaderKeys[headerCnt]
-						if self.download_url+str(headerH) in self.bcParent.aheadBuffer:
+						if self.client_pid+":"+self.download_url+str(headerH) in self.bcParent.aheadBuffer:
 							print "DownloadChunk rangeHeaderKeys Loop "+str(headerH)
 							# Save data in buffer
 							self.bcParent.aheadBuffer_mutex.acquire()
 							print "DownloadChunk rangeHeaderKeys Loop - acquire "+str(headerH)
-							if self.bcParent.aheadBuffer[self.download_url+str(headerH)].complete == 0:
+							if self.bcParent.aheadBuffer[self.client_pid+":"+self.download_url+str(headerH)].complete == 0:
 								print "download_file_part update buffer "+str(headerH)+" size:"+str(self.chunk_size)
-								self.bcParent.aheadBuffer[self.download_url+str(headerH)].data = tracked_data
-								self.bcParent.aheadBuffer[self.download_url+str(headerH)].complete = 1
+								self.bcParent.aheadBuffer[self.client_pid+":"+self.download_url+str(headerH)].data = tracked_data
+								self.bcParent.aheadBuffer[self.client_pid+":"+self.download_url+str(headerH)].complete = 1
 							self.bcParent.aheadBuffer_mutex.release()
 							print "DownloadChunk rangeHeaderKeys Loop - release "+str(headerH)
 						else:
@@ -217,7 +218,7 @@ class Bitcasa:
 		return response
 
 	# File API Methods
-	def download_file_part (self, download_url, offset, size, total_size):
+	def download_file_part (self, download_url, offset, size, total_size, client_pid):
 		rangeHeader = None
 		return_data = None
 		start_byte = offset
@@ -240,13 +241,13 @@ class Bitcasa:
 		endLoop = 1
 		while endLoop != 0:
 			self.aheadBuffer_mutex.acquire()
-			if download_url+str(rangeHeader) in self.aheadBuffer:
+			if client_pid+":"+download_url+str(rangeHeader) in self.aheadBuffer:
 				# Wait to download the current requested block
 				print "download_file_part download found in buffer"+str(rangeHeader)
 				self.aheadBuffer_mutex.release()
 				endLoop = 0
 				sleepCnt = 0
-				while self.aheadBuffer[download_url+str(rangeHeader)].complete != 1:
+				while self.aheadBuffer[client_pid+":"+download_url+str(rangeHeader)].complete != 1:
 					print "download_file_part RangeHeader sleep: "+str(rangeHeader)+" "+str(sleepCnt)
 					time.sleep(0.1)
 					sleepCnt += 1
@@ -254,18 +255,18 @@ class Bitcasa:
 						print "Error (download_file_part) download wait timeout: "+str(rangeHeader)+" "+str(sleepCnt)
 						return
 				self.aheadBuffer_mutex.acquire()
-				return_data = self.aheadBuffer[download_url+str(rangeHeader)].data
-				self.aheadBuffer.pop(download_url+str(rangeHeader), None)
+				return_data = self.aheadBuffer[client_pid+":"+download_url+str(rangeHeader)].data
+				self.aheadBuffer.pop(client_pid+":"+download_url+str(rangeHeader), None)
 				self.aheadBuffer_mutex.release()
 			else:
 				self.aheadBuffer_mutex.release()
 				if ((offset + size) > total_size) or (self.bufferSizeCnt[size] < 3):
 					# ADD SINGLE GET
 					self.aheadBuffer_mutex.acquire()
-					if (download_url+str(rangeHeader) not in self.aheadBuffer) and (rangeHeader != None):
-						self.createBuffer(download_url, rangeHeader, size)
+					if (client_pid+":"+download_url+str(rangeHeader) not in self.aheadBuffer) and (rangeHeader != None):
+						self.createBuffer(download_url, rangeHeader, size, client_pid)
 						print "download_file_part add range header: "+str(rangeHeader)+" Singleton size:"+str(size)
-						job = DownloadChunk(download_url, [rangeHeader], self, size, size, start_byte, end_byte)
+						job = DownloadChunk(download_url, [rangeHeader], self, size, size, start_byte, end_byte, client_pid)
 						self.pool.put(job)
 					self.aheadBuffer_mutex.release()
 					self.pool.wait()
@@ -276,7 +277,7 @@ class Bitcasa:
 						self.download_pause = 1	
 						print "download_file_part Multiple add job: "+str(rangeHeader)+" size:"+str(size)+" count:"+str(self.bufferSizeCnt[size])
 						# Append already calculated
-						if download_url+str(rangeHeader) not in self.aheadBuffer:
+						if client_pid+":"+download_url+str(rangeHeader) not in self.aheadBuffer:
 							new_offset = offset
 							for work in range(self.NUM_WORKERS):
 								if new_offset < total_size:
@@ -291,12 +292,12 @@ class Bitcasa:
 									for chunk in range(max_chunks):
 										new_rangeHeader = {'Range':'bytes='+str(new_offset)+'-'+str(new_offset+(size-1))}
 										if (download_url+str(new_rangeHeader) not in self.aheadBuffer) and (new_rangeHeader != None):
-											self.createBuffer(download_url, new_rangeHeader, size)
+											self.createBuffer(download_url, new_rangeHeader, size, client_pid)
 										ranges.append (new_rangeHeader)
 										new_offset = new_offset+size
 									self.aheadBuffer_mutex.release()
 									print "download_file_part start worker:"+str(work)+", ranges: "+str(ranges)
-									job = DownloadChunk(download_url, ranges, self, size, size, start_byte, end_byte)
+									job = DownloadChunk(download_url, ranges, self, size, size, start_byte, end_byte, client_pid)
 									self.pool.put(job)
 							endLoop += 1
 							if endLoop >  4:
@@ -310,13 +311,13 @@ class Bitcasa:
 		return return_data
 
 
-	def createBuffer (self, download_url, rangeHeader, chunk_size):
+	def createBuffer (self, download_url, rangeHeader, chunk_size, client_pid):
 		newBuf = namedtuple('newBuf', 'data, complete, chunk_size')
 		newBuf.complete = 0
 		newBuf.chunk_size = chunk_size
-		if download_url+str(rangeHeader) not in self.aheadBuffer:
+		if client_pid+":"+download_url+str(rangeHeader) not in self.aheadBuffer:
 			print "Bitcasa:createBuffer create buffer:"+str(rangeHeader)+" size:"+str(chunk_size)
-			self.aheadBuffer[download_url+str(rangeHeader)] = newBuf
+			self.aheadBuffer[client_pid+":"+download_url+str(rangeHeader)] = newBuf
 		else:
 			print "Error (Bitcasa:createBuffer) create buffer:"+str(rangeHeader)+" size:"+str(chunk_size)+" already exists"
 
