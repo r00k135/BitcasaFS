@@ -137,34 +137,26 @@ class BitcasaFS(fuse.Fuse):
 	# File Methods
 	def open(self, path, flags):
 		#pprint.pprint(self.dir)
-		print "Trying to open: ", path + "/" + self.dir[path.split('/')[-1]]['ID']
-		print "Filename is: ", self.dir[path.split('/')[-1]]['Name']
+		#print "Trying to open: ", path + "/" + self.dir[path.split('/')[-1]]['ID']
+		print "Filename is: ", self.dir[path.split('/')[-1]]['Name']+" Client Pid:"+str(self.GetContext()['uid'])
 		download_url = self.bitcasa.download_file_url(self.dir[path.split('/')[-1]]['ID'], self.dir[path.split('/')[-1]]['Path'], self.dir[path.split('/')[-1]]['Name'], self.dir[path.split('/')[-1]]['Size'])
 		self.dir[path.split('/')[-1]]['DownloadURL'] = download_url
 		#temp_file = self.bitcasa.download_file(self.dir[path.split('/')[-1]]['ID'], self.dir[path.split('/')[-1]]['Path'], self.dir[path.split('/')[-1]]['Name'], self.dir[path.split('/')[-1]]['Size'])
-		temp_file = self.bitcasa.cache_dir + "/" + self.dir[path.split('/')[-1]]['Name']
+		#temp_file = self.bitcasa.cache_dir + "/" + self.dir[path.split('/')[-1]]['Name']
 		if download_url != None:
-			return open(temp_file, "wb")
+			return None
 		else:
 			return -errno.EACCESS
 
-	# Read from Cached File
-	# @todo - Consider adding "streaming" mode, we could do it.
-	#def read(self, path, size, offset, fh):
-	#	print "read: "+path+" "+str(size)+" "+str(offset)+" "+str(fh)
-	#	fh.seek(offset)
-	#	return fh.read(size)
+	# Read using streaming
+	def read(self, path, size, offset, fh=None): 
+		print "read: "+path+" offset:"+str(offset)+" size:"+str(size)
+		return self.bitcasa.download_file_part(self.dir[path.split('/')[-1]]['DownloadURL'], offset, size, self.dir[path.split('/')[-1]]['Size'])
 
-        # Read using streaming
-        def read(self, path, size, offset, fh): 
-                print "read: "+path+" offset:"+str(offset)+" size:"+str(size)
-                return self.bitcasa.download_file_part(self.dir[path.split('/')[-1]]['DownloadURL'], offset, size, self.dir[path.split('/')[-1]]['Size'])
-
-	def flush(self, path, fh):
-		print "flush call"
-		if fh != None:
-			print "  close"
-			fh.close()
+	def flush(self, path, fh=None):
+		print "flush call killing"
+		self.bitcasa.pool.shutdown()
+		print "flush call killed"
 		return 0
 
 # return -errno.ENOENT

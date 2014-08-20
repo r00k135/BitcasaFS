@@ -119,11 +119,12 @@ class Bitcasa:
 	aheadBuffer_mutex = threading.Lock()
 	bufferSizeCnt = dict()
 	bufferSizeCnt_mutex = threading.Lock()
-	NUM_WORKERS = 5
+	NUM_WORKERS = 7
 	NUM_SOCKETS = NUM_WORKERS+2
 	NUM_CHUNKS = 10
 	download_pause = 0
 	retry = urllib3.util.Retry(read=3, backoff_factor=2)
+	pool = workerpool.WorkerPool(size=NUM_WORKERS)
 
 	# Start Client & Load Config
 	def __init__ (self, config_path):
@@ -154,8 +155,8 @@ class Bitcasa:
 		# Initiate Connection
 		self.api_host = urlparse(self.api_url).hostname
 		self.api_path = urlparse(self.api_url).path
-		#urllib3.connection.HTTPSConnection.default_socket_options + [(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1),]
-		#urllib3.connection.HTTPConnection.default_socket_options + [(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1),]
+		urllib3.connection.HTTPSConnection.default_socket_options + [(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)]
+		urllib3.connection.HTTPConnection.default_socket_options + [(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)]
 		# Create Connection Pool
 		self.httpsPool = urllib3.HTTPSConnectionPool(self.api_host, maxsize=self.NUM_SOCKETS, timeout=urllib3.Timeout(connect=2.0, read=5.0))
 		return None
@@ -258,7 +259,6 @@ class Bitcasa:
 				self.aheadBuffer_mutex.release()
 			else:
 				self.aheadBuffer_mutex.release()
-				pool = workerpool.WorkerPool(size=self.NUM_WORKERS)
 				if ((offset + size) > total_size) or (self.bufferSizeCnt[size] < 3):
 					# ADD SINGLE GET
 					self.aheadBuffer_mutex.acquire()
@@ -266,11 +266,9 @@ class Bitcasa:
 						self.createBuffer(download_url, rangeHeader, size)
 						print "download_file_part add range header: "+str(rangeHeader)+" Singleton size:"+str(size)
 						job = DownloadChunk(download_url, [rangeHeader], self, size, size, start_byte, end_byte)
-						pool.put(job)
+						self.pool.put(job)
 					self.aheadBuffer_mutex.release()
-					pool.shutdown()
-					print "download_file_part single wait send shutdown: "+str(rangeHeader)+" Singleton size:"+str(size)
-					pool.wait()
+					self.pool.wait()
 					print "download_file_part single wait finished: "+str(rangeHeader)+" Singleton size:"+str(size)
 				else:
 					# ADD MULTIPLE RANGES
@@ -299,7 +297,7 @@ class Bitcasa:
 									self.aheadBuffer_mutex.release()
 									print "download_file_part start worker:"+str(work)+", ranges: "+str(ranges)
 									job = DownloadChunk(download_url, ranges, self, size, size, start_byte, end_byte)
-									pool.put(job)
+									self.pool.put(job)
 							endLoop += 1
 							if endLoop >  4:
 								print "Error: download_file_part max endLoop exceeded: "+str(endLoop)
