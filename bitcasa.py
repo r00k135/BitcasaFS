@@ -257,25 +257,25 @@ class Bitcasa:
 				self.aheadBuffer.pop(download_url+str(rangeHeader), None)
 				self.aheadBuffer_mutex.release()
 			else:
-				if self.download_pause == 0:
-					self.download_pause = 1				
+				self.aheadBuffer_mutex.release()
+				pool = workerpool.WorkerPool(size=self.NUM_WORKERS)
+				if ((offset + size) > total_size) or (self.bufferSizeCnt[size] < 3):
+					# ADD SINGLE GET
+					self.aheadBuffer_mutex.acquire()
+					if (download_url+str(rangeHeader) not in self.aheadBuffer) and (rangeHeader != None):
+						self.createBuffer(download_url, rangeHeader, size)
+						print "download_file_part add range header: "+str(rangeHeader)+" Singleton size:"+str(size)
+						job = DownloadChunk(download_url, [rangeHeader], self, size, size, start_byte, end_byte)
+						pool.put(job)
 					self.aheadBuffer_mutex.release()
-					pool = workerpool.WorkerPool(size=self.NUM_WORKERS)
-					if ((offset + size) > total_size) or (self.bufferSizeCnt[size] < 3):
-						# ADD SINGLE GET
-						self.aheadBuffer_mutex.acquire()
-						if (download_url+str(rangeHeader) not in self.aheadBuffer) and (rangeHeader != None):
-							self.createBuffer(download_url, rangeHeader, size)
-							print "download_file_part add range header: "+str(rangeHeader)+" Singleton size:"+str(size)
-							job = DownloadChunk(download_url, [rangeHeader], self, size, size, start_byte, end_byte)
-							pool.put(job)
-						self.aheadBuffer_mutex.release()
-						pool.shutdown()
-						print "download_file_part single wait send shutdown: "+str(rangeHeader)+" Singleton size:"+str(size)
-						pool.wait()
-						print "download_file_part single wait finished: "+str(rangeHeader)+" Singleton size:"+str(size)
-					else:
-						# ADD MULTIPLE RANGES
+					pool.shutdown()
+					print "download_file_part single wait send shutdown: "+str(rangeHeader)+" Singleton size:"+str(size)
+					pool.wait()
+					print "download_file_part single wait finished: "+str(rangeHeader)+" Singleton size:"+str(size)
+				else:
+					# ADD MULTIPLE RANGES
+					if self.download_pause == 0:
+						self.download_pause = 1	
 						print "download_file_part Multiple add job: "+str(rangeHeader)+" size:"+str(size)+" count:"+str(self.bufferSizeCnt[size])
 						# Append already calculated
 						new_offset = offset
@@ -302,10 +302,10 @@ class Bitcasa:
 						endLoop += 1
 						if endLoop >  4:
 							print "Error: download_file_part max endLoop exceeded: "+str(endLoop)
-					self.download_pause = 0
-				else:
-					time.sleep(0.5)
-					print "download_file_part Multiple add job - download pause "+str(rangeHeader)+" size:"+str(size)+" count:"+str(self.bufferSizeCnt[size])
+						self.download_pause = 0
+					else:
+						time.sleep(0.5)
+						print "download_file_part Multiple add job - download pause "+str(rangeHeader)+" size:"+str(size)+" count:"+str(self.bufferSizeCnt[size])
 		return return_data
 
 
