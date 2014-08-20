@@ -27,6 +27,7 @@ Fuse Filesystem - mount a fuse filesystem
 ~~~
 mkdir myfs
 python bitcasafs.py myfs -o allow_other
+find myfs /# this is necessary to cache the filesystem, hope to remove this
 /# access as normal filesystem - may be slow due to HTTPS comms
 /# umount when finished
 fusermount -u myfs

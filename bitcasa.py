@@ -1,8 +1,11 @@
 # Bitcasa Python Class (Unofficial)
-# Michael Thomas, 2013 
+# Original by: Michael Thomas, 2013 
+# Updated by Chris Elleman (@chris_elleman), 2014
 # TODO #
 ########
-# Update buffer to account for different file names
+# Update buffer to account for multiple processes access
+# Remove the need to do a find / to cache the filesystem in linux
+# De-couple the readAhead buffering from the read operation/download_file_part functions
 
 # Import Section
 import urllib2, urllib, urllib3, httplib, socket, json, base64
@@ -65,7 +68,6 @@ class DownloadChunk(workerpool.Job):
 		self.end_byte = end_byte
 	def run(self):
 		#print "DownloadChunk Downloading file from URL: " + self.download_url
-		# ToDo - convert download to use io buffer
 		threadId = threading.current_thread().ident
 		print "Threads: "+str(threading.active_count())+" "+str(threadId)
 		downLoop = 1
@@ -304,7 +306,7 @@ class Bitcasa:
 		newBuf = namedtuple('newBuf', 'data, complete, chunk_size')
 		newBuf.complete = 0
 		newBuf.chunk_size = chunk_size
-		if str(rangeHeader) not in self.aheadBuffer:
+		if download_url+str(rangeHeader) not in self.aheadBuffer:
 			print "Bitcasa:createBuffer create buffer:"+str(rangeHeader)+" size:"+str(chunk_size)
 			self.aheadBuffer[download_url+str(rangeHeader)] = newBuf
 		else:

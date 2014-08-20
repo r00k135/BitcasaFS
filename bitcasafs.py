@@ -1,5 +1,6 @@
 # BitcasaFS - A FUSE Filesystem Driver for BitcasaFS
-# Michael Thomas, 2013
+# Original by: Michael Thomas, 2013 
+# Updated by Chris Elleman (@chris_elleman), 2014
 
 # Imports
 import os
