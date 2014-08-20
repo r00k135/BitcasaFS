@@ -257,8 +257,8 @@ class Bitcasa:
 				self.aheadBuffer.pop(download_url+str(rangeHeader), None)
 				self.aheadBuffer_mutex.release()
 			else:
-				if download_pause == 0:
-					download_pause = 1				
+				if self.download_pause == 0:
+					self.download_pause = 1				
 					self.aheadBuffer_mutex.release()
 					pool = workerpool.WorkerPool(size=self.NUM_WORKERS)
 					if ((offset + size) > total_size) or (self.bufferSizeCnt[size] < 3):
@@ -302,7 +302,7 @@ class Bitcasa:
 						endLoop += 1
 						if endLoop >  4:
 							print "Error: download_file_part max endLoop exceeded: "+str(endLoop)
-					download_pause = 0
+					self.download_pause = 0
 				else:
 					time.sleep(0.5)
 					print "download_file_part Multiple add job - download pause "+str(rangeHeader)+" size:"+str(size)+" count:"+str(self.bufferSizeCnt[size])
