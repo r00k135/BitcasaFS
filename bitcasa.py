@@ -246,11 +246,11 @@ class Bitcasa:
 				endLoop = 0
 				sleepCnt = 0
 				while self.aheadBuffer[download_url+str(rangeHeader)].complete != 1:
-					print "download_file_part RangeHeader sleep: "+str(rangeHeader)
-					time.sleep(1)
+					print "download_file_part RangeHeader sleep: "+str(rangeHeader)+" "+str(sleepCnt)
+					time.sleep(0.1)
 					sleepCnt += 1
-					if sleepCnt > 600:
-						print "Error (download_file_part) download wait timeout: "+str(rangeHeader)
+					if sleepCnt > 300:
+						print "Error (download_file_part) download wait timeout: "+str(rangeHeader)+" "+str(sleepCnt)
 						return
 				self.aheadBuffer_mutex.acquire()
 				return_data = self.aheadBuffer[download_url+str(rangeHeader)].data
@@ -304,7 +304,7 @@ class Bitcasa:
 							print "Error: download_file_part max endLoop exceeded: "+str(endLoop)
 						self.download_pause = 0
 					else:
-						time.sleep(0.5)
+						time.sleep(0.1)
 						print "download_file_part Multiple add job - download pause "+str(rangeHeader)+" size:"+str(size)+" count:"+str(self.bufferSizeCnt[size])
 		return return_data
 
