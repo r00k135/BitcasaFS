@@ -304,7 +304,7 @@ class Bitcasa:
 							if endLoop >  4:
 								print "Error: download_file_part max endLoop exceeded: "+str(endLoop)
 						else:
-							print "download_file_part Multiple add job: buffer already created, skipping"
+							print "download_file_part Multiple add job: buffer already created, skipping "+str(rangeHeader)
 						self.download_pause = 0
 					else:
 						time.sleep(0.1)
