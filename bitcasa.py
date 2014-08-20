@@ -278,30 +278,33 @@ class Bitcasa:
 						self.download_pause = 1	
 						print "download_file_part Multiple add job: "+str(rangeHeader)+" size:"+str(size)+" count:"+str(self.bufferSizeCnt[size])
 						# Append already calculated
-						new_offset = offset
-						for work in range(self.NUM_WORKERS):
-							if new_offset < total_size:
-								start_byte = new_offset
-								ranges = []
-								max_chunks = int((total_size - new_offset) / size)
-								if max_chunks > self.NUM_CHUNKS:
-									max_chunks = self.NUM_CHUNKS
-								end_byte = start_byte + ((max_chunks * size)-1)
-								print "download_file_part Multiple add job: "+str(rangeHeader)+" max_chunks:"+str(max_chunks)+" start_byte:"+str(start_byte)+" end_byte:"+str(end_byte)
-								self.aheadBuffer_mutex.acquire()
-								for chunk in range(max_chunks):
-									new_rangeHeader = {'Range':'bytes='+str(new_offset)+'-'+str(new_offset+(size-1))}
-									if (download_url+str(new_rangeHeader) not in self.aheadBuffer) and (new_rangeHeader != None):
-										self.createBuffer(download_url, new_rangeHeader, size)
-									ranges.append (new_rangeHeader)
-									new_offset = new_offset+size
-								self.aheadBuffer_mutex.release()
-								print "download_file_part start worker:"+str(work)+", ranges: "+str(ranges)
-								job = DownloadChunk(download_url, ranges, self, size, size, start_byte, end_byte)
-								pool.put(job)
-						endLoop += 1
-						if endLoop >  4:
-							print "Error: download_file_part max endLoop exceeded: "+str(endLoop)
+						if download_url+str(rangeHeader) not in self.aheadBuffer:
+							new_offset = offset
+							for work in range(self.NUM_WORKERS):
+								if new_offset < total_size:
+									start_byte = new_offset
+									ranges = []
+									max_chunks = int((total_size - new_offset) / size)
+									if max_chunks > self.NUM_CHUNKS:
+										max_chunks = self.NUM_CHUNKS
+									end_byte = start_byte + ((max_chunks * size)-1)
+									print "download_file_part Multiple add job: "+str(rangeHeader)+" max_chunks:"+str(max_chunks)+" start_byte:"+str(start_byte)+" end_byte:"+str(end_byte)
+									self.aheadBuffer_mutex.acquire()
+									for chunk in range(max_chunks):
+										new_rangeHeader = {'Range':'bytes='+str(new_offset)+'-'+str(new_offset+(size-1))}
+										if (download_url+str(new_rangeHeader) not in self.aheadBuffer) and (new_rangeHeader != None):
+											self.createBuffer(download_url, new_rangeHeader, size)
+										ranges.append (new_rangeHeader)
+										new_offset = new_offset+size
+									self.aheadBuffer_mutex.release()
+									print "download_file_part start worker:"+str(work)+", ranges: "+str(ranges)
+									job = DownloadChunk(download_url, ranges, self, size, size, start_byte, end_byte)
+									pool.put(job)
+							endLoop += 1
+							if endLoop >  4:
+								print "Error: download_file_part max endLoop exceeded: "+str(endLoop)
+						else:
+							print "download_file_part Multiple add job: buffer already created, skipping"
 						self.download_pause = 0
 					else:
 						time.sleep(0.1)
