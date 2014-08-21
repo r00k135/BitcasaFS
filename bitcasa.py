@@ -97,6 +97,7 @@ class DownloadChunk(workerpool.Job):
 								print "download_file_part update buffer "+str(headerH)+" size:"+str(self.chunk_size)
 								self.bcParent.aheadBuffer[self.client_pid+":"+self.download_url+str(headerH)].data = tracked_data
 								self.bcParent.aheadBuffer[self.client_pid+":"+self.download_url+str(headerH)].complete = 1
+								self.bcParent.aheadBuffer[self.client_pid+":"+self.download_url+str(headerH)].last_accessed = time.time()
 							self.bcParent.aheadBuffer_mutex.release()
 							print "DownloadChunk rangeHeaderKeys Loop - release "+str(headerH)
 						else:
@@ -120,9 +121,9 @@ class Bitcasa:
 	aheadBuffer_mutex = threading.Lock()
 	bufferSizeCnt = dict()
 	bufferSizeCnt_mutex = threading.Lock()
-	NUM_WORKERS = 5
+	NUM_WORKERS = 10
 	NUM_SOCKETS = NUM_WORKERS+2
-	NUM_CHUNKS = 10
+	NUM_CHUNKS = 20  # must be an even number
 	download_pause = 0
 	retry = urllib3.util.Retry(read=3, backoff_factor=2)
 	pool = workerpool.WorkerPool(size=NUM_WORKERS)
@@ -224,10 +225,10 @@ class Bitcasa:
 		print "download_file_part RangeHeader top check: "+str(rangeHeader)
 		# TRACK BLOCK SIZE
 		self.bufferSizeCnt_mutex.acquire()
-		if size in self.bufferSizeCnt:
-			self.bufferSizeCnt[size] += 1
+		if client_pid+":"+download_url+":"+str(size) in self.bufferSizeCnt:
+			self.bufferSizeCnt[client_pid+":"+download_url+":"+str(size)] += 1
 		else:
-			self.bufferSizeCnt[size] = 1
+			self.bufferSizeCnt[client_pid+":"+download_url+":"+str(size)] = 1
 		self.bufferSizeCnt_mutex.release()
 		# CHECK FOR RESULT BEING PRE-BUFFERED
 		endLoop = 1
@@ -252,7 +253,7 @@ class Bitcasa:
 				self.aheadBuffer_mutex.release()
 			else:
 				self.aheadBuffer_mutex.release()
-				if ((offset + size) > total_size) or (self.bufferSizeCnt[size] < 3):
+				if ((offset + size) > total_size) or (self.bufferSizeCnt[client_pid+":"+download_url+":"+str(size)] < 3):
 					# ADD SINGLE GET
 					self.aheadBuffer_mutex.acquire()
 					if (client_pid+":"+download_url+str(rangeHeader) not in self.aheadBuffer) and (rangeHeader != None):
@@ -267,7 +268,7 @@ class Bitcasa:
 					# ADD MULTIPLE RANGES
 					if self.download_pause == 0:
 						self.download_pause = 1	
-						print "download_file_part Multiple add job: "+str(rangeHeader)+" size:"+str(size)+" count:"+str(self.bufferSizeCnt[size])
+						print "download_file_part Multiple add job: "+str(rangeHeader)+" size:"+str(size)+" count:"+str(self.bufferSizeCnt[client_pid+":"+download_url+":"+str(size)])
 						# Append already calculated
 						if client_pid+":"+download_url+str(rangeHeader) not in self.aheadBuffer:
 							new_offset = offset
@@ -299,14 +300,15 @@ class Bitcasa:
 						self.download_pause = 0
 					else:
 						time.sleep(0.1)
-						print "download_file_part Multiple add job - download pause "+str(rangeHeader)+" size:"+str(size)+" count:"+str(self.bufferSizeCnt[size])
+						print "download_file_part Multiple add job - download pause "+str(rangeHeader)+" size:"+str(size)+" count:"+str(self.bufferSizeCnt[client_pid+":"+download_url+":"+str(size)])
 		return return_data
 
 
 	def createBuffer (self, download_url, rangeHeader, chunk_size, client_pid):
-		newBuf = namedtuple('newBuf', 'data, complete, chunk_size')
+		newBuf = namedtuple('newBuf', 'data, complete, chunk_size, last_accessed')
 		newBuf.complete = 0
 		newBuf.chunk_size = chunk_size
+		newBuf.last_accessed = time.time()
 		if client_pid+":"+download_url+str(rangeHeader) not in self.aheadBuffer:
 			print "Bitcasa:createBuffer create buffer:"+str(rangeHeader)+" size:"+str(chunk_size)
 			self.aheadBuffer[client_pid+":"+download_url+str(rangeHeader)] = newBuf
