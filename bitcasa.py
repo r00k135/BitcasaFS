@@ -120,7 +120,7 @@ class Bitcasa:
 	aheadBuffer_mutex = threading.Lock()
 	bufferSizeCnt = dict()
 	bufferSizeCnt_mutex = threading.Lock()
-	NUM_WORKERS = 7
+	NUM_WORKERS = 5
 	NUM_SOCKETS = NUM_WORKERS+2
 	NUM_CHUNKS = 10
 	download_pause = 0
@@ -143,24 +143,16 @@ class Bitcasa:
 		self.redirect_url = self.config['redirect_url'].encode('utf-8')
 		self.auth_token = self.config['auth_token'].encode('utf-8')
 		self.access_token = self.config['access_token'].encode('utf-8')
-		# Adding support for File Cache - ToDo remove requirement
-		self.cache_dir = self.config['cache_dir'].encode('utf-8')
-		if(self.cache_dir == None):
-			sys.exit("Exception (Bitcasa:init): Could not find cache_dir config variable: ")
-		# Now Make sure it exists
-		if not os.path.exists(self.cache_dir):
-			sys.exit("Exception (Bitcasa:init): cache_dir doesn't exist: "+self.cache_dir)
 		# See if we need our tokens
 		if(self.auth_token == "") or (self.access_token == ""):
 			return self.authenticate()
-		# Initiate Connection
+		# Initiate Connections
 		self.api_host = urlparse(self.api_url).hostname
 		self.api_path = urlparse(self.api_url).path
 		urllib3.connection.HTTPSConnection.default_socket_options + [(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)]
 		urllib3.connection.HTTPConnection.default_socket_options + [(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)]
 		# Create Connection Pool
 		self.httpsPool = urllib3.HTTPSConnectionPool(self.api_host, maxsize=self.NUM_SOCKETS, timeout=urllib3.Timeout(connect=2.0, read=5.0))
-		return None
 
 	def authenticate (self):
 		print("### ENTER THE FOLLOWING URL IN A BROWSER AND AUTHORIZE THIS APPLICATION ###")
@@ -201,21 +193,21 @@ class Bitcasa:
 		else:
 			return response['result']['items']
 
-	def add_folder (self, path, folder_name):
-		payload = {"folder_name":folder_name}
-		request = urllib2.Request(self.api_url + "/folders/" + path + "?access_token=" + self.access_token, urllib.urlencode(payload))
-		try:
-			response = json.load(urllib2.urlopen(request))
-		except httplib2.HttpLib2Error, e:
-			response = e.read()
-		return response
+	#def add_folder (self, path, folder_name):
+	#	payload = {"folder_name":folder_name}
+	#	request = urllib2.Request(self.api_url + "/folders/" + path + "?access_token=" + self.access_token, urllib.urlencode(payload))
+	#	try:
+	#		response = json.load(urllib2.urlopen(request))
+	#	except httplib2.HttpLib2Error, e:
+	#		response = e.read()
+	#	return response
 
-	def delete_folder (self, path):
-		payload = {"path":path}
-		request = urllib2.Request(self.api_url + "/folders/?access_token=" + self.access_token, urllib.urlencode(payload))
-		request.get_method = lambda: 'DELETE'
-		response = json.load(urllib2.urlopen(request))
-		return response
+	#def delete_folder (self, path):
+	#	payload = {"path":path}
+	#	request = urllib2.Request(self.api_url + "/folders/?access_token=" + self.access_token, urllib.urlencode(payload))
+	#	request.get_method = lambda: 'DELETE'
+	#	response = json.load(urllib2.urlopen(request))
+	#	return response
 
 	# File API Methods
 	def download_file_part (self, download_url, offset, size, total_size, client_pid):
@@ -248,11 +240,11 @@ class Bitcasa:
 				endLoop = 0
 				sleepCnt = 0
 				while self.aheadBuffer[client_pid+":"+download_url+str(rangeHeader)].complete != 1:
-					print "download_file_part RangeHeader sleep: "+str(rangeHeader)+" "+str(sleepCnt)
+					print "download_file_part waiting for aheadBuffer to fill: "+str(rangeHeader)+" "+str(sleepCnt)
 					time.sleep(0.1)
 					sleepCnt += 1
 					if sleepCnt > 300:
-						print "Error (download_file_part) download wait timeout: "+str(rangeHeader)+" "+str(sleepCnt)
+						print "Error (download_file_part) aheadBuffer wait timeout: "+str(rangeHeader)+" "+str(sleepCnt)
 						return
 				self.aheadBuffer_mutex.acquire()
 				return_data = self.aheadBuffer[client_pid+":"+download_url+str(rangeHeader)].data

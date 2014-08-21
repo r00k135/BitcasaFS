@@ -3,7 +3,7 @@
 # Updated by Chris Elleman (@chris_elleman), 2014
 
 # Imports
-import os
+import os, signal
 import errno
 import fuse
 import stat
@@ -115,30 +115,30 @@ class BitcasaFS(fuse.Fuse):
 			# Now yield to FUSE
 			yield fuse.Direntry(b['name'].encode('utf-8'))
 
-	def mkdir(self, path, mode):
-		result = self.bitcasa.add_folder(self.bpath, path.split('/')[-1])
-		if(result['error'] == None):
-			new = result['result']['items'][0]
-			item = { 'Name':new['name'].encode('utf-8'), 'Path':new['path'].encode('utf-8'), 'Type':new['category'], 'mtime':new['mtime'] }
-			self.dir[new['name'].encode('utf-8')] = item
-			return 0
-		else:
-			return -errno.ENOSYS
+	#def mkdir(self, path, mode):
+	#	result = self.bitcasa.add_folder(self.bpath, path.split('/')[-1])
+	#	if(result['error'] == None):
+	#		new = result['result']['items'][0]
+	#		item = { 'Name':new['name'].encode('utf-8'), 'Path':new['path'].encode('utf-8'), 'Type':new['category'], 'mtime':new['mtime'] }
+	#		self.dir[new['name'].encode('utf-8')] = item
+	#		return 0
+	#	else:
+	#		return -errno.ENOSYS
 
 	# WIP - Doesn't report "file not found"
-	def rmdir(self, path):
-		print("Removing " + path + ";CurrentPath: " + self.bpath)
-		result = self.bitcasa.delete_folder(self.dir[path.split('/')[-1]]['Path'])
-		if(result['error'] == None):
-			return 0
-		else:
-			return -errno.ENOSYS
+	#def rmdir(self, path):
+	#	print("Removing " + path + ";CurrentPath: " + self.bpath)
+	#	result = self.bitcasa.delete_folder(self.dir[path.split('/')[-1]]['Path'])
+	#	if(result['error'] == None):
+	#		return 0
+	#	else:
+	#		return -errno.ENOSYS
 
 	# File Methods
 	def open(self, path, flags):
 		#pprint.pprint(self.dir)
 		#print "Trying to open: ", path + "/" + self.dir[path.split('/')[-1]]['ID']
-		print "Filename is: ", self.dir[path.split('/')[-1]]['Name']+" Client Pid:"+str(self.GetContext()['uid'])
+		print "open started: filename is ", self.dir[path.split('/')[-1]]['Name']+" Client Pid:"+str(self.GetContext()['uid'])
 		download_url = self.bitcasa.download_file_url(self.dir[path.split('/')[-1]]['ID'], self.dir[path.split('/')[-1]]['Path'], self.dir[path.split('/')[-1]]['Name'], self.dir[path.split('/')[-1]]['Size'])
 		self.dir[path.split('/')[-1]]['DownloadURL'] = download_url
 		#temp_file = self.bitcasa.download_file(self.dir[path.split('/')[-1]]['ID'], self.dir[path.split('/')[-1]]['Path'], self.dir[path.split('/')[-1]]['Name'], self.dir[path.split('/')[-1]]['Size'])
@@ -150,17 +150,32 @@ class BitcasaFS(fuse.Fuse):
 
 	# Read using streaming
 	def read(self, path, size, offset, fh=None): 
-		print "read: "+path+" offset:"+str(offset)+" size:"+str(size)
+		print "read started: "+path+" offset:"+str(offset)+" size:"+str(size)
 		return self.bitcasa.download_file_part(self.dir[path.split('/')[-1]]['DownloadURL'], offset, size, self.dir[path.split('/')[-1]]['Size'], str(self.GetContext()['uid']))
 
+	# Release the file after reading is done
+	def release(self, path, flags, fh=None):
+		#ToDo flush aheadBuffer looking for keys with the client pid
+		print "release file: "+str(path)+", buffer still allocated:"+str(len(self.bitcasa.aheadBuffer))+" Client Pid:"+str(self.GetContext()['uid'])
+
 	def flush(self, path, fh=None):
-		print "flush call killing"
-		self.bitcasa.pool.shutdown()
-		print "flush call killed, buffer still allocated:"+str(len(self.bitcasa.aheadBuffer))
+		print "flush: "+str(path)+", buffer still allocated:"+str(len(self.bitcasa.aheadBuffer))+" Client Pid:"+str(self.GetContext()['uid'])
 		return 0
+
+	def fsdestroy(self):
+		self.bitcasa.pool.shutdown()
+
+
+def handler(signum, frame):
+	fh = open("/tmp/test", "wb")
+	fh.write (str(time.time()))
+	fh.close()
+	print 'Signal handler called with signal', signum
 
 # return -errno.ENOENT
 if __name__ == '__main__':
 	fs = BitcasaFS()
 	fs.parse(errex=1)
-	fs.main()
+	#signal.signal(signal.SIGQUIT, signal.SIG_DFL)
+	signal.signal(signal.SIGQUIT, handler)
+	fs.main() # blocking call

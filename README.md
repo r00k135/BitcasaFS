@@ -32,3 +32,12 @@ find myfs /# this is necessary to cache the filesystem, hope to remove this
 /# umount when finished
 fusermount -u myfs
 ~~~
+
+
+Reference Docs
+==============
+I have used the following sources to write this:
+~~~
+https://launchpad.net/fuse-python-docs
+http://www.stavros.io/posts/python-fuse-filesystem/
+~~~
