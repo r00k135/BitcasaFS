@@ -16,46 +16,6 @@ import mutex, threading, workerpool
 from collections import namedtuple
 from itertools import count
 
-class DownloadJob(workerpool.Job):
-	def __init__(self, download_url, rangeHeader, bcParent, size):
-		# should execute within a mutex
-		self.download_url = download_url
-		self.rangeHeader = rangeHeader
-		self.size = size
-		self.bcParent = bcParent
-		if self.rangeHeader != None:
-			newBuf = namedtuple('newBuf', 'data, complete, size')
-			if str(self.rangeHeader) not in self.bcParent.aheadBuffer:
-				print "download_file_part create buffer "+str(self.rangeHeader)+" size:"+str(self.size)
-				self.bcParent.aheadBuffer[self.download_url+str(self.rangeHeader)] = newBuf
-				self.bcParent.aheadBuffer[self.download_url+str(self.rangeHeader)].complete = 0
-				self.bcParent.aheadBuffer[self.download_url+str(self.rangeHeader)].size = self.size
-	def run(self):
-		#print "MyJob Downloading file from URL: " + self.download_url
-		threadId = threading.current_thread().ident
-		print "Threads: "+str(threading.active_count())+" "+str(threadId)
-		downLoop = 1
-		while downLoop != 0:
-			r3 = None
-			try:
-				print "download_file_part create request"
-				r3 = self.bcParent.httpsPool.request("GET", self.download_url,headers=self.rangeHeader,retries=self.bcParent.retry)
-				print "download_file_part get data "+str(self.rangeHeader)+" connection used: "+str(self.bcParent.httpsPool.num_connections)
-				downLoop = 0
-			except Exception as e:
-				print "Exception (DownloadJob): "+str(type(e))+" "+str(e)
-				downLoop += 1
-				if downLoop > 4:
-					print "Error: DownloadJob downLoop too high, can't download range:"+str(self.rangeHeader)
-					return
-			self.bcParent.aheadBuffer_mutex.acquire()
-			if self.bcParent.aheadBuffer[self.download_url+str(self.rangeHeader)].complete == 0:
-				print "download_file_part update buffer "+str(self.rangeHeader)+" size:"+str(self.size)
-				self.bcParent.aheadBuffer[self.download_url+str(self.rangeHeader)].data = r3.data
-				self.bcParent.aheadBuffer[self.download_url+str(self.rangeHeader)].complete = 1
-			self.bcParent.aheadBuffer_mutex.release()
-
-
 class DownloadChunk(workerpool.Job):
 	def __init__(self, download_url, rangeHeaderKeys, bcParent, chunk_size, buffer_size, start_byte, end_byte, client_pid):
 		# should execute within a mutex
@@ -123,7 +83,7 @@ class Bitcasa:
 	bufferSizeCnt_mutex = threading.Lock()
 	NUM_WORKERS = 10
 	NUM_SOCKETS = NUM_WORKERS+2
-	NUM_CHUNKS = 20  # must be an even number
+	NUM_CHUNKS = 10  # must be an even number
 	download_pause = 0
 	retry = urllib3.util.Retry(read=3, backoff_factor=2)
 	pool = workerpool.WorkerPool(size=NUM_WORKERS)
@@ -238,7 +198,6 @@ class Bitcasa:
 				# Wait to download the current requested block
 				print "download_file_part download found in buffer"+str(rangeHeader)
 				self.aheadBuffer_mutex.release()
-				endLoop = 0
 				sleepCnt = 0
 				while self.aheadBuffer[client_pid+":"+download_url+str(rangeHeader)].complete != 1:
 					print "download_file_part waiting for aheadBuffer to fill: "+str(rangeHeader)+" "+str(sleepCnt)
@@ -251,6 +210,8 @@ class Bitcasa:
 				return_data = self.aheadBuffer[client_pid+":"+download_url+str(rangeHeader)].data
 				self.aheadBuffer.pop(client_pid+":"+download_url+str(rangeHeader), None)
 				self.aheadBuffer_mutex.release()
+				endLoop = 0
+				return return_data
 			else:
 				self.aheadBuffer_mutex.release()
 				if ((offset + size) > total_size) or (self.bufferSizeCnt[client_pid+":"+download_url+":"+str(size)] < 3):
@@ -277,21 +238,22 @@ class Bitcasa:
 									start_byte = new_offset
 									ranges = []
 									max_chunks = int((total_size - new_offset) / size)
-									if max_chunks > self.NUM_CHUNKS:
-										max_chunks = self.NUM_CHUNKS
-									end_byte = start_byte + ((max_chunks * size)-1)
-									print "download_file_part Multiple add job: "+str(rangeHeader)+" max_chunks:"+str(max_chunks)+" start_byte:"+str(start_byte)+" end_byte:"+str(end_byte)
-									self.aheadBuffer_mutex.acquire()
-									for chunk in range(max_chunks):
-										new_rangeHeader = {'Range':'bytes='+str(new_offset)+'-'+str(new_offset+(size-1))}
-										if (download_url+str(new_rangeHeader) not in self.aheadBuffer) and (new_rangeHeader != None):
-											self.createBuffer(download_url, new_rangeHeader, size, client_pid)
-										ranges.append (new_rangeHeader)
-										new_offset = new_offset+size
-									self.aheadBuffer_mutex.release()
-									print "download_file_part start worker:"+str(work)+", ranges: "+str(ranges)
-									job = DownloadChunk(download_url, ranges, self, size, size, start_byte, end_byte, client_pid)
-									self.pool.put(job)
+									if max_chunks > 0:
+										if max_chunks > self.NUM_CHUNKS:
+											max_chunks = self.NUM_CHUNKS
+										end_byte = start_byte + ((max_chunks * size)-1)
+										print "download_file_part Multiple add job: "+str(rangeHeader)+" max_chunks:"+str(max_chunks)+" start_byte:"+str(start_byte)+" end_byte:"+str(end_byte)
+										self.aheadBuffer_mutex.acquire()
+										for chunk in range(max_chunks):
+											new_rangeHeader = {'Range':'bytes='+str(new_offset)+'-'+str(new_offset+(size-1))}
+											if (download_url+str(new_rangeHeader) not in self.aheadBuffer) and (new_rangeHeader != None):
+												self.createBuffer(download_url, new_rangeHeader, size, client_pid)
+											ranges.append (new_rangeHeader)
+											new_offset = new_offset+size
+										self.aheadBuffer_mutex.release()
+										print "download_file_part start worker:"+str(work)+", ranges: "+str(ranges)
+										job = DownloadChunk(download_url, ranges, self, size, size, start_byte, end_byte, client_pid)
+										self.pool.put(job)
 							endLoop += 1
 							if endLoop >  4:
 								print "Error: download_file_part max endLoop exceeded: "+str(endLoop)
@@ -301,7 +263,6 @@ class Bitcasa:
 					else:
 						time.sleep(0.1)
 						print "download_file_part Multiple add job - download pause "+str(rangeHeader)+" size:"+str(size)+" count:"+str(self.bufferSizeCnt[client_pid+":"+download_url+":"+str(size)])
-		return return_data
 
 
 	def createBuffer (self, download_url, rangeHeader, chunk_size, client_pid):
