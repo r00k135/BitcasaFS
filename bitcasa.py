@@ -3,8 +3,8 @@
 # Updated by Chris Elleman (@chris_elleman), 2014
 # TODO #
 ########
-# Update buffer to account for multiple processes access
-# Remove the need to do a find / to cache the filesystem in linux
+# Change all functions so that when they output, they all use a standard notation to show the ThreadId
+# Remove the need to do a "find /" to cache the filesystem in linux
 # De-couple the readAhead buffering from the read operation/download_file_part functions
 
 # Import Section
@@ -28,9 +28,9 @@ class DownloadChunk(workerpool.Job):
 		self.end_byte = end_byte
 		self.client_pid = client_pid
 	def run(self):
+		logString = "T:"+str(threading.current_thread().ident)+" N:"+threading.current_thread().name+" Cnt:"+str(threading.active_count())+" F:DownloadChunk:run "
 		#print "DownloadChunk Downloading file from URL: " + self.download_url
-		threadId = threading.current_thread().ident
-		print "Threads: "+str(threading.active_count())+" "+str(threadId)
+		print logString+"starting"
 		downLoop = 1
 		while downLoop != 0:
 			r3 = None
@@ -38,31 +38,31 @@ class DownloadChunk(workerpool.Job):
 			tracked_data = None
 			try:
 				requestHeader = {'Range':'bytes='+str(self.start_byte)+'-'+str(self.end_byte)}
-				print "DownloadChunk create range request: "+str(requestHeader)
-				#r3 = self.bcParent.httpsPool.urlopen("GET", self.download_url,headers=requestHeader,retries=self.bcParent.retry)
+				print logString+"create range request: "+str(requestHeader)+" buffer_size: "+str(self.buffer_size)
 				r3 = self.bcParent.httpsPool.urlopen("GET", self.download_url, headers=requestHeader,retries=self.bcParent.retry,preload_content=False)
-				print str(r3)+" buffer_size:"+str(self.buffer_size)
 				buffered_data = r3.stream(self.chunk_size)
-				print "start reading rangeHeaderKeys"
+				print logString+"stream created, start reading rangeHeaderKeys"
 				headerCnt = 0
+				headerLen = len(self.rangeHeaderKeys)
 				for tracked_data in buffered_data:
-					if headerCnt < len(self.rangeHeaderKeys):
+					if headerCnt < headerLen:
 						headerH = self.rangeHeaderKeys[headerCnt]
 						if self.client_pid+":"+self.download_url+str(headerH) in self.bcParent.aheadBuffer:
-							print "DownloadChunk rangeHeaderKeys Loop "+str(headerH)
-							# Save data in buffer
+							print logString+"rangeHeaderKeys Loop "+str(headerH)+" save data in buffer"
 							self.bcParent.aheadBuffer_mutex.acquire()
-							print "DownloadChunk rangeHeaderKeys Loop - acquire "+str(headerH)
 							if self.bcParent.aheadBuffer[self.client_pid+":"+self.download_url+str(headerH)].complete == 0:
-								print "download_file_part update buffer "+str(headerH)+" size:"+str(self.chunk_size)
+								print logString+"update aheadBuffer item with data "+str(headerH)+" size:"+str(self.chunk_size)
 								self.bcParent.aheadBuffer[self.client_pid+":"+self.download_url+str(headerH)].data = tracked_data
 								self.bcParent.aheadBuffer[self.client_pid+":"+self.download_url+str(headerH)].complete = 1
 								self.bcParent.aheadBuffer[self.client_pid+":"+self.download_url+str(headerH)].last_accessed = time.time()
+							else:
+								print logString+"aheadBuffer item already completed" +str(headerH)
 							self.bcParent.aheadBuffer_mutex.release()
-							print "DownloadChunk rangeHeaderKeys Loop - release "+str(headerH)
 						else:
-							print "Error (download_file_part): index not found: "+str(headerH)
+							print logString+"Error (download_file_part): index not found: "+str(headerH)
 						headerCnt += 1
+					else:
+						print logString+"headerCnt ("+str(headerCnt)+" > headerLen ("+str(headerLen)+")"
 				r3.release_conn()
 				downLoop = 0
 			except Exception as e:
@@ -134,24 +134,27 @@ class Bitcasa:
 			return error
 
 	def list_folder (self, path = ""):
-		print "Threads: "+str(threading.active_count())+" "+str(threading.current_thread().ident)
+		logString = "T:"+str(threading.current_thread().ident)+" N:"+threading.current_thread().name+" Cnt:"+str(threading.active_count())+" F:Bitcasa:list_folder "
+		print logString+"starting"
 		r2 = None
 		response = None
 		try:
 			list_folder_url = self.api_path + "/folders" + path + "?access_token=" + self.access_token
-			print "list_folder.list_folder_url = "+list_folder_url
+			print logString+"list_folder_url = "+list_folder_url
 			r2 = self.httpsPool.request("GET", list_folder_url,retries=self.retry)
-			print "list_folder: "+str(r2.status)
+			print logString+"connection status: "+str(r2.status)
 			raw_response = r2.data
 			r2.release_conn()
-			print "list_folder.raw_response = "+raw_response
+			print logString+"raw_response = "+raw_response
 			response = json.loads(raw_response)
 		except Exception, e:
-			print "Exception: "+str(e)
+			print logString+"Exception: "+str(e)
 			return {}
 		if(response['result'] == None):
+			print logString+"ending - no response"
 			return response
 		else:
+			print logString+"ending - with data"
 			return response['result']['items']
 
 	#def add_folder (self, path, folder_name):
@@ -172,6 +175,8 @@ class Bitcasa:
 
 	# File API Methods
 	def download_file_part (self, download_url, offset, size, total_size, client_pid):
+		logString = "T:"+str(threading.current_thread().ident)+" N:"+threading.current_thread().name+" Cnt:"+str(threading.active_count())+" F:Bitcasa:download_file_part "
+		print logString+"starting"
 		rangeHeader = None
 		return_data = None
 		start_byte = offset
