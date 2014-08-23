@@ -10,6 +10,8 @@ import stat
 import time
 import pprint
 from bitcasa import Bitcasa
+import logging
+import logging.handlers
 
 fuse.fuse_python_api = (0, 2)
 
@@ -55,8 +57,16 @@ class BitcasaFS(fuse.Fuse):
 		fuse.Fuse.__init__(self, *args, **kw)
 		print "Fuse Init"
 		
+		# Set-Up Logger
+		self.bcfslog = logging.getLogger(__name__)
+ 		self.bcfslog.setLevel(logging.DEBUG)
+		handler = logging.handlers.SysLogHandler(address = '/dev/log', facility=logging.handlers.SysLogHandler.LOG_LOCAL6)
+		formatter = logging.Formatter('Thead:%(thread)d(%(threadName)s) Function:%(module)s.%(funcName)s: %(message)s')
+		handler.setFormatter(formatter)
+ 		self.bcfslog.addHandler(handler)
+
 		# Python FUSE Options
-		self.bitcasa = Bitcasa('config.json')
+		self.bitcasa = Bitcasa('config.json', self.bcfslog)
 		if(self.bitcasa == None):
 			sys.exit("Failed to authenticate Bitcasa Client.")
 		print "Authenticated fine"
@@ -150,19 +160,20 @@ class BitcasaFS(fuse.Fuse):
 
 	# Read using streaming
 	def read(self, path, size, offset, fh=None): 
-		print "read started: "+path+" offset:"+str(offset)+" size:"+str(size)
+		self.bcfslog.debug("read started: "+path+" offset:"+str(offset)+" size:"+str(size))
 		return self.bitcasa.download_file_part(self.dir[path.split('/')[-1]]['DownloadURL'], offset, size, self.dir[path.split('/')[-1]]['Size'], str(self.GetContext()['uid']))
 
 	# Release the file after reading is done
 	def release(self, path, flags, fh=None):
 		#ToDo flush aheadBuffer looking for keys with the client pid
-		print "release file: "+str(path)+", buffer still allocated:"+str(len(self.bitcasa.aheadBuffer))+" Client Pid:"+str(self.GetContext()['uid'])
+		self.bcfslog.debug("release file: "+str(path)+", buffer still allocated:"+str(len(self.bitcasa.aheadBuffer))+" Client Pid:"+str(self.GetContext()['uid']))
 
 	def flush(self, path, fh=None):
-		print "flush: "+str(path)+", buffer still allocated:"+str(len(self.bitcasa.aheadBuffer))+" Client Pid:"+str(self.GetContext()['uid'])
+		self.bcfslog.debug("flush: "+str(path)+", buffer still allocated:"+str(len(self.bitcasa.aheadBuffer))+" Client Pid:"+str(self.GetContext()['uid']))
 		return 0
 
 	def fsdestroy(self):
+		self.bcfslog.debug("destroy")
 		self.bitcasa.pool.shutdown()
 
 
@@ -170,7 +181,7 @@ def handler(signum, frame):
 	fh = open("/tmp/test", "wb")
 	fh.write (str(time.time()))
 	fh.close()
-	print 'Signal handler called with signal', signum
+	print "Signal handler called with signal", signum
 
 # return -errno.ENOENT
 if __name__ == '__main__':
