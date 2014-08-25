@@ -49,6 +49,8 @@ class bcfsHTTPHandler(BaseHTTPServer.BaseHTTPRequestHandler):
 					lastline = ""
 					firstline = 1
 					for filename, lineno, name, line in traceback.extract_stack(stack):
+						line = line.strip()
+						line = line.replace('"', '\\"')
 						if firstline == 1:
 							code.append('\t\t{"filename": "%s", "line": %d, "function": "%s", "line": "%s"}' % (filename, lineno, name, line.strip()))
 							firstline = 0
@@ -70,7 +72,8 @@ class bcfsHTTPHandler(BaseHTTPServer.BaseHTTPRequestHandler):
 				self.wfile.write('"buffers": [\r\n')
 				self.wfile.write('\t{"aheadBufferLen": "%s"},\r\n' % str(len(self.server.bitcasa.aheadBuffer)))
 				self.wfile.write('\t{"aheadBufferLockedBy": "%s"},\r\n' % str(self.server.bitcasa.aheadBuffer_lockedByThread))
-				self.wfile.write('\t{"bufferSizeCntLen": "%s"}\r\n' % str(len(self.server.bitcasa.bufferSizeCnt)))
+				self.wfile.write('\t{"bufferSizeCntLen": "%s"},\r\n' % str(len(self.server.bitcasa.bufferSizeCnt)))
+				self.wfile.write('\t{"active_connections": "%s"}\r\n' % str(self.server.bitcasa.active_connections))
 				self.wfile.write('\t]\r\n')
 				self.wfile.write('}\r\n')
 			else:
@@ -179,6 +182,7 @@ class DownloadChunk(workerpool.Job):
 				self.bcfslog.debug("requesting connection from https pool: "+str(requestHeader)+" buffer_size: "+str(self.buffer_size))
 				tstart = datetime.datetime.now()
 				r3 = self.bcParent.httpsPool.urlopen("GET", self.download_url, assert_same_host=True, headers=requestHeader,retries=self.bcParent.retry,preload_content=False)
+				self.bcParent.active_connections += 1
 				tdelta = datetime.datetime.now() - tstart
 				self.bcfslog.debug("got connection from https pool, took ("+str(int(tdelta.total_seconds()*1000))+"ms), now create stream: "+str(requestHeader)+" buffer_size: "+str(self.buffer_size))
 				buffered_data = r3.stream(self.chunk_size)
@@ -210,7 +214,9 @@ class DownloadChunk(workerpool.Job):
 					else:
 						self.bcfslog.debug("headerCnt ("+str(headerCnt)+" > headerLen ("+str(headerLen)+")")
 				tdelta = datetime.datetime.now() - tstart
+				r3.flush()
 				r3.release_conn()
+				self.bcParent.active_connections -= 1
 				self.bcfslog.debug("connection released back to the pool, download time ("+str(int(tdelta.total_seconds()*1000))+"ms): "+str(requestHeader)+" buffer_size: "+str(self.buffer_size))
 				downLoop = 0
 			except Exception as e:
@@ -238,13 +244,14 @@ class Bitcasa:
 	bufferSizeCnt_mutex = threading.Lock()
 	NUM_WORKERS = 4
 	NUM_SOCKETS = NUM_WORKERS+2
-	NUM_CHUNKS = 6  # must be an even number
+	NUM_CHUNKS = 10  # must be an even number
 	download_pause = 0
 	download_pause_mutex = threading.Lock()
 	retry = urllib3.util.Retry(read=10, backoff_factor=2)
 	timeout = urllib3.Timeout(connect=5.0, read=10.0)
 	pool = workerpool.WorkerPool(size=NUM_WORKERS)
 	httpd_thread = None
+	active_connections = 0
 	bcfslog = None
 
 	# Start Client & Load Config
@@ -309,9 +316,11 @@ class Bitcasa:
 			list_folder_url = self.api_path + "/folders" + path + "?access_token=" + self.access_token
 			self.bcfslog.debug("list_folder_url = "+list_folder_url)
 			r2 = self.httpsPool.request("GET", list_folder_url,retries=self.retry)
+			self.active_connections += 1
 			self.bcfslog.debug("connection status: "+str(r2.status))
 			raw_response = r2.data
 			r2.release_conn()
+			self.active_connections -= 1
 			self.bcfslog.debug("raw_response = "+raw_response)
 			response = json.loads(raw_response)
 		except Exception, e:
