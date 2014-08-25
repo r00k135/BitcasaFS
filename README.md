@@ -34,6 +34,19 @@ fusermount -u myfs
 ~~~
 
 
+Status Server
+=============
+Add an http server in a seperate thread so that you can monitor the driver with an REST API/HTTP requests, default port is 9090. Commands are below (using curl):
+~~~
+curl http://127.0.0.1:9090/bcfsapi20140823/bcfs_thread_status     # get status of all threads
+curl http://127.0.0.1:9090/bcfsapi20140823/bcfs_buffer_sizes      # get size of readAhead buffer and block track buffer
+~~~
+
+There is also an HTML dashboard available in the docroot on:
+~~~
+http://127.0.0.1:9090/
+~~~
+
 Reference Docs
 ==============
 I have used the following sources to write this:

@@ -175,6 +175,7 @@ class BitcasaFS(fuse.Fuse):
 	def fsdestroy(self):
 		self.bcfslog.debug("destroy")
 		self.bitcasa.pool.shutdown()
+		self.bitcasa.httpd_thread.stop()
 
 
 def handler(signum, frame):

@@ -1,0 +1,67 @@
+<html>
+<head>
+<title>BitcasaFS Dashboard</title>
+<script src="jquery-1.11.0.min.js"></script>
+<link rel="stylesheet" type="text/css" href="style.css">
+</head>
+<body>
+	<h1>BitcasaFS Dashboard</h1>
+
+	<script>
+	$.ajax({
+		url: '/bcfsapi20140823/bcfs_thread_status', //Change this path to your JSON file.
+		type: "get",
+		dataType: "json",
+		//Remove the "data" attribute, relevant to this example, but isn't necessary in deployment.
+		success: function(data, textStatus, jqXHR) {
+			drawTableThread(data);
+		}
+	});
+
+	$.ajax({
+		url: '/bcfsapi20140823/bcfs_buffer_sizes', //Change this path to your JSON file.
+		type: "get",
+		dataType: "json",
+		//Remove the "data" attribute, relevant to this example, but isn't necessary in deployment.
+		success: function(data, textStatus, jqXHR) {
+			drawTableBuffer(data);
+		}
+	});
+
+	function drawTableThread(data) {
+	    var rows = [];
+		for (var i = 0; i < data.threads.length; i++) {
+			rows.push(drawRowThread(data.threads[i]));
+		}
+		$("#threadTable").append(rows);
+	}
+
+	function drawRowThread(rowData) {
+		var row = $("<tr />")
+		row.append($("<td>" + rowData.threadId + "</td>"));
+		row.append($("<td>" + rowData.threadName + "</td>"));
+		row.append($("<td>" + rowData.line + "</td>"));
+	    return row;
+	}
+
+	function drawTableBuffer(data) {
+		$("#bufferStatus").append("<tr><td>aheadBuffer</td><td>"+data.buffers[0].aheadBufferLen+"</td></tr>")
+		$("#bufferStatus").append("<tr><td>aheadBufferLockedBy</td><td>"+data.buffers[1].aheadBufferLockedBy+"</td></tr>")
+		$("#bufferStatus").append("<tr><td>bufferSizeCnt</td><td>"+data.buffers[2].bufferSizeCntLen+"</td></tr>")
+	}
+
+	</script>
+
+	<h2>Threads</h2>
+	<table>
+	<tbody id="threadTable">
+	</tbody>
+	</table>
+
+	<h2>Buffers</h2>
+	<table>
+	<tbody id="bufferStatus">
+	</tbody>
+	</table>
+</body>
+</html>
