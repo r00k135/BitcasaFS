@@ -3,12 +3,11 @@
 # Updated by Chris Elleman (@chris_elleman), 2014
 # TODO #
 ########
-# Change all functions so that when they output, they all use a standard notation to show the ThreadId
 # Remove the need to do a "find /" to cache the filesystem in linux
 # De-couple the readAhead buffering from the read operation/download_file_part functions
 
 # Import Section
-import urllib2, urllib, urllib3, httplib, socket, json, base64
+import urllib2, urllib, urllib3, httplib, socket, json, base64, requests
 import sys, os, io, logging
 import pprint, time, datetime
 from urlparse import urlparse
@@ -240,11 +239,13 @@ class Bitcasa:
 	aheadBuffer = dict()
 	aheadBuffer_mutex = threading.Lock()
 	aheadBuffer_lockedByThread = 0
+	bufferAhead = 0
+	singleConn = None
 	bufferSizeCnt = dict()
 	bufferSizeCnt_mutex = threading.Lock()
 	NUM_WORKERS = 4
-	NUM_SOCKETS = NUM_WORKERS+2
-	NUM_CHUNKS = 10  # must be an even number
+	NUM_SOCKETS = 5
+	NUM_CHUNKS = 2  # must be an even number
 	download_pause = 0
 	download_pause_mutex = threading.Lock()
 	retry = urllib3.util.Retry(read=10, backoff_factor=2)
@@ -289,6 +290,16 @@ class Bitcasa:
 		# Create Connection Pool
 		self.bcfslog.debug("create connection pool")
 		self.httpsPool = urllib3.HTTPSConnectionPool(self.api_host, maxsize=self.NUM_SOCKETS, timeout=self.timeout)
+		if self.bufferAhead == 0:
+			self.bcfslog.debug("create single connection")
+			self.singleConn = requests.Session()
+			self.singleConn.mount('https://', requests.adapters.HTTPAdapter(pool_connections=100, pool_maxsize=100))
+			response = self.singleConn.get(self.api_url, verify=True)
+			self.bcfslog.debug("create single connection, result code:"+str(response.status_code))
+			result = response.text
+			self.bcfslog.debug("create single connection, result text:"+str(result))
+
+
 
 	def authenticate (self):
 		print("### ENTER THE FOLLOWING URL IN A BROWSER AND AUTHORIZE THIS APPLICATION ###")
@@ -362,111 +373,129 @@ class Bitcasa:
 		else:
 			rangeHeader = {'Range':'bytes='+str(offset)+'-'+str(offset+(size-1))}
 			end_byte = offset+(size-1)
-		self.bcfslog.debug("RangeHeader top check: "+str(rangeHeader))
-		# TRACK BLOCK SIZE
-		self.bufferSizeCnt_mutex.acquire()
-		if client_pid+":"+download_url+":"+str(size) in self.bufferSizeCnt:
-			self.bufferSizeCnt[client_pid+":"+download_url+":"+str(size)] += 1
+		self.bcfslog.debug("RangeHeader top check: "+str(rangeHeader)+" bufferAhead:"+str(self.bufferAhead))
+		if self.bufferAhead == 0:
+			# JUST DO A RANGE GET FOR THE BLOCK REQUESTED
+			tstart = datetime.datetime.now()
+			#r3 = self.httpsPool.request("GET", download_url, headers=rangeHeader,retries=self.retry)
+			r3 = self.singleConn.get("https://"+self.api_host+download_url, headers=rangeHeader)
+			self.active_connections += 1
+			tdelta = datetime.datetime.now() - tstart
+			self.bcfslog.debug("got connection from https pool, took ("+str(int(tdelta.total_seconds()*1000))+"ms), now create stream: "+str(rangeHeader))
+			tstart = datetime.datetime.now()
+			#return_data = r3.data
+			return_data = r3.content
+			tdelta = datetime.datetime.now() - tstart
+			#r3.flush()
+			#r3.release_conn()
+			self.active_connections -= 1
+			self.bcfslog.debug("connection released back to the pool, download time ("+str(int(tdelta.total_seconds()*1000))+"ms): "+str(rangeHeader))
+			return return_data
 		else:
-			self.bufferSizeCnt[client_pid+":"+download_url+":"+str(size)] = 1
-		self.bufferSizeCnt_mutex.release()
-		# CHECK FOR RESULT BEING PRE-BUFFERED
-		endLoop = 1
-		while endLoop != 0:
-			self.aheadBuffer_mutex.acquire()
-			self.aheadBuffer_lockedByThread = threading.current_thread().ident
-			self.bcfslog.debug("acquire aheadBuffer_mutex")
-			if client_pid+":"+download_url+str(rangeHeader) in self.aheadBuffer:
-				# Wait to download the current requested block
-				self.bcfslog.debug("download found in buffer"+str(rangeHeader))
-				self.aheadBuffer_lockedByThread = 0
-				self.bcfslog.debug("release aheadBuffer_mutex")
-				self.aheadBuffer_mutex.release()
-				sleepCnt = 0
-				while self.aheadBuffer[client_pid+":"+download_url+str(rangeHeader)].complete != 1:
-					self.bcfslog.debug("waiting for aheadBuffer to fill: "+str(rangeHeader)+" "+str(sleepCnt))
-					time.sleep(0.01)
-					sleepCnt += 1
-					if sleepCnt > 300:
-						self.bcfslog.error("Error (download_file_part) aheadBuffer wait timeout: "+str(rangeHeader)+" "+str(sleepCnt))
-						return
+			# TRACK BLOCK SIZE
+			self.bufferSizeCnt_mutex.acquire()
+			if client_pid+":"+download_url+":"+str(size) in self.bufferSizeCnt:
+				self.bufferSizeCnt[client_pid+":"+download_url+":"+str(size)] += 1
+			else:
+				self.bufferSizeCnt[client_pid+":"+download_url+":"+str(size)] = 1
+			self.bufferSizeCnt_mutex.release()
+			# CHECK FOR RESULT BEING PRE-BUFFERED
+			endLoop = 1
+			while endLoop != 0:
 				self.aheadBuffer_mutex.acquire()
 				self.aheadBuffer_lockedByThread = threading.current_thread().ident
 				self.bcfslog.debug("acquire aheadBuffer_mutex")
-				return_data = self.aheadBuffer[client_pid+":"+download_url+str(rangeHeader)].data
-				self.aheadBuffer.pop(client_pid+":"+download_url+str(rangeHeader), None)
-				self.aheadBuffer_lockedByThread = 0
-				self.bcfslog.debug("release aheadBuffer_mutex")
-				self.aheadBuffer_mutex.release()
-				endLoop = 0
-				return return_data
-			else:
-				self.aheadBuffer_lockedByThread = 0
-				self.bcfslog.debug("release aheadBuffer_mutex")
-				self.aheadBuffer_mutex.release()
-				if ((offset + size) > total_size) or (self.bufferSizeCnt[client_pid+":"+download_url+":"+str(size)] < 3):
-					# ADD SINGLE GET
-					self.aheadBuffer_mutex.acquire()
-					self.bcfslog.debug("acquire aheadBuffer_mutex")
-					self.aheadBuffer_lockedByThread = threading.current_thread().ident
-					if (client_pid+":"+download_url+str(rangeHeader) not in self.aheadBuffer) and (rangeHeader != None):
-						self.createBuffer(download_url, rangeHeader, size, client_pid)
-						self.bcfslog.debug("add range header: "+str(rangeHeader)+" Singleton size:"+str(size))
-						job = DownloadChunk(download_url, [rangeHeader], self, size, size, start_byte, end_byte, client_pid, self.bcfslog)
-						self.pool.put(job)
+				if client_pid+":"+download_url+str(rangeHeader) in self.aheadBuffer:
+					# Wait to download the current requested block
+					self.bcfslog.debug("download found in buffer"+str(rangeHeader))
 					self.aheadBuffer_lockedByThread = 0
 					self.bcfslog.debug("release aheadBuffer_mutex")
 					self.aheadBuffer_mutex.release()
-					self.pool.wait()
-					self.bcfslog.debug("single wait finished: "+str(rangeHeader)+" Singleton size:"+str(size))
-				else:
-					# ADD MULTIPLE RANGES
-					self.download_pause_mutex.acquire()
-					if self.download_pause == 0:
-						self.download_pause = 1
-						self.download_pause_mutex.release()	
-						self.bcfslog.debug("Multiple add job: "+str(rangeHeader)+" size:"+str(size)+" count:"+str(self.bufferSizeCnt[client_pid+":"+download_url+":"+str(size)]))
-						# Append already calculated
-						if client_pid+":"+download_url+str(rangeHeader) not in self.aheadBuffer:
-							new_offset = offset
-							for work in range(self.NUM_WORKERS):
-								if new_offset < total_size:
-									start_byte = new_offset
-									ranges = []
-									max_chunks = int((total_size - new_offset) / size)
-									if max_chunks > 0:
-										if max_chunks > self.NUM_CHUNKS:
-											max_chunks = self.NUM_CHUNKS
-										end_byte = start_byte + ((max_chunks * size)-1)
-										self.bcfslog.debug("Multiple add job: "+str(rangeHeader)+" max_chunks:"+str(max_chunks)+" start_byte:"+str(start_byte)+" end_byte:"+str(end_byte))
-										self.aheadBuffer_mutex.acquire()
-										self.bcfslog.debug("acquire aheadBuffer_mutex")
-										self.aheadBuffer_lockedByThread = threading.current_thread().ident
-										for chunk in range(max_chunks):
-											new_rangeHeader = {'Range':'bytes='+str(new_offset)+'-'+str(new_offset+(size-1))}
-											if (download_url+str(new_rangeHeader) not in self.aheadBuffer) and (new_rangeHeader != None):
-												self.createBuffer(download_url, new_rangeHeader, size, client_pid)
-											ranges.append (new_rangeHeader)
-											new_offset = new_offset+size
-										self.aheadBuffer_lockedByThread = 0
-										self.bcfslog.debug("release aheadBuffer_mutex")
-										self.aheadBuffer_mutex.release()
-										self.bcfslog.debug("Multiple add job: start downloader process:"+str(work)+", ranges: "+str(ranges))
-										tstart = datetime.datetime.now()
-										job = DownloadChunk(download_url, ranges, self, size, size, start_byte, end_byte, client_pid, self.bcfslog)
-										self.pool.put(job)
-										tdelta = datetime.datetime.now() - tstart
-										self.bcfslog.debug("Multiple add job: added (took "+str(int(tdelta.total_seconds()*1000))+"ms):"+str(work)+", ranges: "+str(ranges))
-							endLoop += 1
-							if endLoop >  4:
-								self.bcfslog.error("Error: download_file_part max endLoop exceeded: "+str(endLoop))
-						else:
-							self.bcfslog.debug("Multiple add job: buffer already created, skipping "+str(rangeHeader))
-						self.download_pause = 0
-					else:
-						self.download_pause_mutex.release()	
+					sleepCnt = 0
+					while self.aheadBuffer[client_pid+":"+download_url+str(rangeHeader)].complete != 1:
+						self.bcfslog.debug("waiting for aheadBuffer to fill: "+str(rangeHeader)+" "+str(sleepCnt))
 						time.sleep(0.01)
-						self.bcfslog.debug("Multiple add job - download pause "+str(rangeHeader)+" size:"+str(size)+" count:"+str(self.bufferSizeCnt[client_pid+":"+download_url+":"+str(size)]))
+						sleepCnt += 1
+						if sleepCnt > 300:
+							self.bcfslog.error("Error (download_file_part) aheadBuffer wait timeout: "+str(rangeHeader)+" "+str(sleepCnt))
+							return
+					self.aheadBuffer_mutex.acquire()
+					self.aheadBuffer_lockedByThread = threading.current_thread().ident
+					self.bcfslog.debug("acquire aheadBuffer_mutex")
+					return_data = self.aheadBuffer[client_pid+":"+download_url+str(rangeHeader)].data
+					self.aheadBuffer.pop(client_pid+":"+download_url+str(rangeHeader), None)
+					self.aheadBuffer_lockedByThread = 0
+					self.bcfslog.debug("release aheadBuffer_mutex")
+					self.aheadBuffer_mutex.release()
+					endLoop = 0
+					return return_data
+				else:
+					self.aheadBuffer_lockedByThread = 0
+					self.bcfslog.debug("release aheadBuffer_mutex")
+					self.aheadBuffer_mutex.release()
+					if ((offset + size) > total_size) or (self.bufferSizeCnt[client_pid+":"+download_url+":"+str(size)] < 3):
+						# ADD SINGLE GET
+						self.aheadBuffer_mutex.acquire()
+						self.bcfslog.debug("acquire aheadBuffer_mutex")
+						self.aheadBuffer_lockedByThread = threading.current_thread().ident
+						if (client_pid+":"+download_url+str(rangeHeader) not in self.aheadBuffer) and (rangeHeader != None):
+							self.createBuffer(download_url, rangeHeader, size, client_pid)
+							self.bcfslog.debug("add range header: "+str(rangeHeader)+" Singleton size:"+str(size))
+							job = DownloadChunk(download_url, [rangeHeader], self, size, size, start_byte, end_byte, client_pid, self.bcfslog)
+							self.pool.put(job)
+						self.aheadBuffer_lockedByThread = 0
+						self.bcfslog.debug("release aheadBuffer_mutex")
+						self.aheadBuffer_mutex.release()
+						self.pool.wait()
+						self.bcfslog.debug("single wait finished: "+str(rangeHeader)+" Singleton size:"+str(size))
+					else:
+						# ADD MULTIPLE RANGES
+						self.download_pause_mutex.acquire()
+						if self.download_pause == 0:
+							self.download_pause = 1
+							self.download_pause_mutex.release()	
+							self.bcfslog.debug("Multiple add job: "+str(rangeHeader)+" size:"+str(size)+" count:"+str(self.bufferSizeCnt[client_pid+":"+download_url+":"+str(size)]))
+							# Append already calculated
+							if client_pid+":"+download_url+str(rangeHeader) not in self.aheadBuffer:
+								new_offset = offset
+								for work in range(self.NUM_WORKERS):
+									if new_offset < total_size:
+										start_byte = new_offset
+										ranges = []
+										max_chunks = int((total_size - new_offset) / size)
+										if max_chunks > 0:
+											if max_chunks > self.NUM_CHUNKS:
+												max_chunks = self.NUM_CHUNKS
+											end_byte = start_byte + ((max_chunks * size)-1)
+											self.bcfslog.debug("Multiple add job: "+str(rangeHeader)+" max_chunks:"+str(max_chunks)+" start_byte:"+str(start_byte)+" end_byte:"+str(end_byte))
+											self.aheadBuffer_mutex.acquire()
+											self.bcfslog.debug("acquire aheadBuffer_mutex")
+											self.aheadBuffer_lockedByThread = threading.current_thread().ident
+											for chunk in range(max_chunks):
+												new_rangeHeader = {'Range':'bytes='+str(new_offset)+'-'+str(new_offset+(size-1))}
+												if (download_url+str(new_rangeHeader) not in self.aheadBuffer) and (new_rangeHeader != None):
+													self.createBuffer(download_url, new_rangeHeader, size, client_pid)
+												ranges.append (new_rangeHeader)
+												new_offset = new_offset+size
+											self.aheadBuffer_lockedByThread = 0
+											self.bcfslog.debug("release aheadBuffer_mutex")
+											self.aheadBuffer_mutex.release()
+											self.bcfslog.debug("Multiple add job: start downloader process:"+str(work)+", ranges: "+str(ranges))
+											tstart = datetime.datetime.now()
+											job = DownloadChunk(download_url, ranges, self, size, size, start_byte, end_byte, client_pid, self.bcfslog)
+											self.pool.put(job)
+											tdelta = datetime.datetime.now() - tstart
+											self.bcfslog.debug("Multiple add job: added (took "+str(int(tdelta.total_seconds()*1000))+"ms):"+str(work)+", ranges: "+str(ranges))
+								endLoop += 1
+								if endLoop >  4:
+									self.bcfslog.error("Error: download_file_part max endLoop exceeded: "+str(endLoop))
+							else:
+								self.bcfslog.debug("Multiple add job: buffer already created, skipping "+str(rangeHeader))
+							self.download_pause = 0
+						else:
+							self.download_pause_mutex.release()	
+							time.sleep(0.01)
+							self.bcfslog.debug("Multiple add job - download pause "+str(rangeHeader)+" size:"+str(size)+" count:"+str(self.bufferSizeCnt[client_pid+":"+download_url+":"+str(size)]))
 		self.bcfslog.debug("download finished "+str(rangeHeader)+" size:"+str(size))
 
 	def createBuffer (self, download_url, rangeHeader, chunk_size, client_pid):

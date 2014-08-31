@@ -148,7 +148,7 @@ class BitcasaFS(fuse.Fuse):
 	def open(self, path, flags):
 		#pprint.pprint(self.dir)
 		#print "Trying to open: ", path + "/" + self.dir[path.split('/')[-1]]['ID']
-		print "open started: filename is ", self.dir[path.split('/')[-1]]['Name']+" Client Pid:"+str(self.GetContext()['uid'])
+		print "OPEN started: filename is ", self.dir[path.split('/')[-1]]['Name']+" Client Pid:"+str(self.GetContext()['uid'])
 		download_url = self.bitcasa.download_file_url(self.dir[path.split('/')[-1]]['ID'], self.dir[path.split('/')[-1]]['Path'], self.dir[path.split('/')[-1]]['Name'], self.dir[path.split('/')[-1]]['Size'])
 		self.dir[path.split('/')[-1]]['DownloadURL'] = download_url
 		#temp_file = self.bitcasa.download_file(self.dir[path.split('/')[-1]]['ID'], self.dir[path.split('/')[-1]]['Path'], self.dir[path.split('/')[-1]]['Name'], self.dir[path.split('/')[-1]]['Size'])
@@ -160,7 +160,7 @@ class BitcasaFS(fuse.Fuse):
 
 	# Read using streaming
 	def read(self, path, size, offset, fh=None): 
-		self.bcfslog.debug("read started: "+path+" offset:"+str(offset)+" size:"+str(size))
+		self.bcfslog.debug("READ started: "+path+" offset:"+str(offset)+" size:"+str(size))
 		return self.bitcasa.download_file_part(self.dir[path.split('/')[-1]]['DownloadURL'], offset, size, self.dir[path.split('/')[-1]]['Size'], str(self.GetContext()['uid']))
 
 	# Release the file after reading is done
