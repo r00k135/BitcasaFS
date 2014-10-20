@@ -8,9 +8,11 @@ Updated to work with the current API
 
 Python Packages Required
 ========================
-apt-get install python-fuse   # ubuntu
+~~~
+apt-get install python-fuse python-pip   # ubuntu
 pip install urllib3
 pip install workerpool
+~~~
 
 
 Usage
